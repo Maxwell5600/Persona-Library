@@ -5,11 +5,11 @@ the native Persona Management panel with a full-bleed image grid and a proper
 detail view — browse, create, edit, and organize your personas the way you'd
 browse characters, instead of scrolling a cramped avatar strip.
 
-<!-- Add screenshots here — the gallery grid and the detail modal side by side
-     make the strongest case for what this actually does.
-![Gallery grid](screenshots/grid.png)
-![Detail modal](screenshots/detail.png)
--->
+<img width="1918" height="921" alt="Screenshot 2026-08-17 213102" src="https://github.com/user-attachments/assets/6ce2cb8a-12a1-44c9-a238-ca2110c1bd97" />
+<img width="1912" height="917" alt="Screenshot 2026-08-17 211504" src="https://github.com/user-attachments/assets/2afbe466-d84b-4461-bd6c-627d15fc44c2" />
+<img width="1918" height="916" alt="Screenshot 2026-08-17 211517" src="https://github.com/user-attachments/assets/5676cd50-f2c3-48f2-9bb8-bd6860e73381" />
+<img width="1917" height="917" alt="Screenshot 2026-08-17 211527" src="https://github.com/user-attachments/assets/e41f90d2-fbf8-482a-93ce-549a770c575c" />
+
 
 ## Features
 
