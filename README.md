@@ -100,4 +100,10 @@ Built independently, for personas rather than characters.
 
 ## License
 
-*(add your preferred license here — e.g. MIT — before publishing)*
+License
+
+Unlicense — public domain dedication. Use it however you'd like.
+
+A note on how this was built
+
+This extension was built through an extended conversation with Claude (Anthropic), directing every design decision, feature, and bug fix — but not hand-writing the code line by line. Sharing that plainly rather than leaving it unstated.
