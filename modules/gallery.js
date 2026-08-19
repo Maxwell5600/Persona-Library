@@ -227,7 +227,7 @@ export function createPersonaLibrary(container, adapter) {
     );
 
     function persist(patch) {
-        Object.assign(settings, patch);
+        Object.assign(settings, patch);        
         try { adapter.saveSettings?.(patch); } catch (e) { console.warn('[PersonaLibrary] saveSettings failed', e); }
     }
 
@@ -671,8 +671,8 @@ export function createPersonaLibrary(container, adapter) {
         });
 
         const joinerInput = el('input', {
-            type: 'text', class: 'pl-variants-joiner', value: draft.joiner ?? '\n\n',
-            oninput: () => { markDirty(); draft.joiner = joinerInput.value; },
+            type: 'text', class: 'pl-variants-joiner', value: (draft.joiner.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/\t/g, '\\t')) ?? '\n\n',
+            oninput: () => { markDirty(); draft.joiner = joinerInput.value.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\\\/g, '\\') },
         });
         const wrapperToggle = el('input', {
             type: 'checkbox',
@@ -783,12 +783,12 @@ export function createPersonaLibrary(container, adapter) {
         const positionLabel = POSITIONS.find(([v]) => v === (p.position === undefined || p.position === null ? '' : String(p.position)))?.[1] ?? 'Default';
         const roleLabel = ROLES.find(([v]) => v === String(p.role ?? 0))?.[1] ?? 'System';
 
-        let previewMode = 'default';
+        let previewMode = 'combined';
         const modeSelect = el('select', { class: 'pl-select' }, [
             el('option', { value: 'default', text: 'Preview as: Default (no character/chat)' }),
             el('option', { value: 'character', text: 'Preview as: This Character' }),
             el('option', { value: 'chat', text: 'Preview as: This Chat' }),
-            el('option', { value: 'combined', text: 'Preview as: Everything (this chat + this character, combined \u2014 closest to a real generation)' }),
+            el('option', { SELECTED: true, value: 'combined', text: 'Preview as: Everything (this chat + this character, combined \u2014 closest to a real generation)' }),
         ]);
 
         const infoBar = el('div', { class: 'pl-preview-info' });
