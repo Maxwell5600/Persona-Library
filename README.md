@@ -5,11 +5,18 @@ the native Persona Management panel with a full-bleed image grid and a proper
 detail view — browse, create, edit, and organize your personas the way you'd
 browse characters, instead of scrolling a cramped avatar strip.
 
-<!-- Add screenshots here — the gallery grid and the detail modal side by side
-     make the strongest case for what this actually does.
-![Gallery grid](screenshots/grid.png)
-![Detail modal](screenshots/detail.png)
--->
+<img width="1918" height="921" alt="Screenshot 2026-08-17 213102" src="https://github.com/user-attachments/assets/6ce2cb8a-12a1-44c9-a238-ca2110c1bd97" />
+<img width="1918" height="916" alt="Screenshot 2026-08-18 211532" src="https://github.com/user-attachments/assets/6c120003-c135-4a70-a6c4-bfa5bfdc4e36" />
+<img width="1918" height="917" alt="Screenshot 2026-08-18 211617" src="https://github.com/user-attachments/assets/19363996-13e0-40f0-aed4-825c7939b416" />
+<img width="1912" height="917" alt="Screenshot 2026-08-17 211504" src="https://github.com/user-attachments/assets/2afbe466-d84b-4461-bd6c-627d15fc44c2" />
+<img width="1918" height="916" alt="Screenshot 2026-08-17 211517" src="https://github.com/user-attachments/assets/5676cd50-f2c3-48f2-9bb8-bd6860e73381" />
+<img width="1917" height="917" alt="Screenshot 2026-08-17 211527" src="https://github.com/user-attachments/assets/e41f90d2-fbf8-482a-93ce-549a770c575c" />
+<img width="1918" height="922" alt="Screenshot 2026-08-17 220147" src="https://github.com/user-attachments/assets/944c8195-c3b3-49c7-8f0a-a9718fbe52b8" />
+<img width="1912" height="925" alt="Screenshot 2026-08-17 215742" src="https://github.com/user-attachments/assets/a3d08c68-bf95-4c6e-ba2b-29434c6d8f12" />
+<img width="1918" height="921" alt="Screenshot 2026-08-18 210830" src="https://github.com/user-attachments/assets/16c3671c-9c85-4b02-b1a9-1f82a3091592" />
+<img width="1918" height="918" alt="Screenshot 2026-08-18 210911" src="https://github.com/user-attachments/assets/f96fb2ed-cc2c-4807-b9d9-00a73d2bad88" />
+<img width="1918" height="922" alt="Screenshot 2026-08-18 210818" src="https://github.com/user-attachments/assets/31cb18da-1d1d-415c-8e6f-88ae8191c535" />
+<img width="1918" height="910" alt="Screenshot 2026-08-18 211257" src="https://github.com/user-attachments/assets/5b2cdf4c-6407-4879-b73a-e0d910de4b3c" />
 
 ## Features
 
