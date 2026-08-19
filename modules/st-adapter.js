@@ -267,16 +267,51 @@ function activeVariantContext() {
 // build: it sourced restore from the Sections cache, which can silently
 // drift out of sync with the real, live persona description).
 // Only one swap is tracked at a time, same as PME.
-let patchState = { active: false, id: null, original: null, restoreTimer: null };
+let patchState = { active: false, id: null, original: null, originalSingular: null, restoreTimer: null, appliedAt: 0 };
 let generationStartCount = 0;
 let hookInstalled = false; // module-level idempotency guard — see registerVariantGenerationHook
+
+// SillyTavern fires BOTH the GENERATION_AFTER_COMMANDS event AND every
+// registered generate_interceptor for the SAME real generation, moments
+// apart, well before any end event. That is expected, confirmed behavior
+// (not a race) — so a re-entrant applyVariantPatch call arriving within
+// this window is almost certainly the SAME generation's second trigger,
+// not a genuinely stale leftover from an earlier, already-ended
+// generation. 5s is generous relative to the sub-second gap actually
+// observed between the two triggers, while staying far shorter than any
+// realistic gap between two truly separate generations.
+const SAME_GENERATION_WINDOW_MS = 5_000;
+
+// Safety net, same idea as PME: force-restore even if end events never fire
+// (crash, dropped connection, extension conflict swallowing the event,
+// etc.). This is a LAST-RESORT fallback, not a normal completion path — it
+// must stay comfortably longer than any real generation takes. 30s was too
+// short for slower backends (streamed replies regularly run 60-100s+),
+// which made it fire routinely instead of only on genuine failures. 10
+// minutes is long enough to essentially never fire during a normal, if
+// slow, generation, while still recovering from a truly hung/crashed one.
+// The only user-visible cost of a long value here: if a swap genuinely gets
+// stuck (failure + no further generation triggered), the persona's stored
+// description sits in the swapped/composed state until either (a) another
+// generation starts, which self-heals it immediately regardless of this
+// timer, or (b) this timer eventually fires. It's only actually exposed if
+// someone opens the persona editor and looks during that specific window.
+const SAFETY_NET_MS = 10 * 60 * 1000;
+
+function armSafetyTimer(callId) {
+    if (patchState.restoreTimer) clearTimeout(patchState.restoreTimer);
+    patchState.restoreTimer = setTimeout(() => {
+        console.warn(`[PersonaLibrary] (#${callId}) safety-net timer fired — end event never arrived within ${SAFETY_NET_MS / 1000}s, forcing restore`);
+        restorePatch('safety-net-timer');
+    }, SAFETY_NET_MS);
+}
 
 function restorePatch(reason) {
     if (!patchState.active) {
         console.log(`[PersonaLibrary] restorePatch(${reason}): nothing active, no-op`);
         return;
     }
-    const { id, original } = patchState;
+    const { id, original, originalSingular } = patchState;
     try {
         const pu = powerUser();
         const d = pu.persona_descriptions?.[id];
@@ -285,8 +320,20 @@ function restorePatch(reason) {
             return; // leave patchState.active=true so a later call retries
         }
         d.description = original;
+        // THE FIELD THAT ACTUALLY MATTERS: power_user.persona_description
+        // (singular) is what SillyTavern reads when building the real
+        // prompt — confirmed by capturing the raw backend payload, which
+        // showed only this field's contents, never the composed variant
+        // text, even though persona_descriptions[id].description (plural,
+        // the storage dictionary) was being correctly patched the whole
+        // time. Restore this one too, unconditionally — it's only ever
+        // touched while this persona is the active one (see
+        // applyVariantPatch), so restoring it here is always correct.
+        if (typeof originalSingular === 'string') {
+            pu.persona_description = originalSingular;
+        }
         if (patchState.restoreTimer) { clearTimeout(patchState.restoreTimer); }
-        patchState = { active: false, id: null, original: null, restoreTimer: null };
+        patchState = { active: false, id: null, original: null, originalSingular: null, restoreTimer: null, appliedAt: 0 };
         console.log(`[PersonaLibrary] END EVENT RECEIVED (${reason}) — restored persona description for`, id);
         if (getActiveId() === id && typeof ctx()?.setPersonaDescription === 'function') {
             try { ctx().setPersonaDescription(); } catch (e) { console.warn('[PersonaLibrary] setPersonaDescription() failed during restore', e); }
@@ -302,11 +349,23 @@ function applyVariantPatch(reason) {
     generationStartCount += 1;
     const callId = generationStartCount;
     try {
-        // Put back any swap a previous, still-outstanding call left in
-        // place FIRST, so composing again never builds on top of an
-        // already-injected description (prevents duplicate-compounding).
         if (patchState.active) {
-            console.warn(`[PersonaLibrary] (#${callId}, ${reason}) a swap was still active from a previous generation — restoring it before composing again. If you see this on EVERY generation, the end event is not reliably reaching us.`);
+            const age = Date.now() - patchState.appliedAt;
+            if (age < SAME_GENERATION_WINDOW_MS) {
+                // ST fires GENERATION_AFTER_COMMANDS and generate_interceptor
+                // for the SAME generation, moments apart — this is that
+                // expected second trigger, not a missed restore. The patch
+                // already applied by the first trigger is already correct;
+                // leave it (and its restore timer) exactly as-is instead of
+                // tearing it down and reapplying.
+                console.log(`[PersonaLibrary] (#${callId}, ${reason}) redundant trigger ${age}ms after the first — same generation, already patched for`, patchState.id, '— no-op');
+                return;
+            }
+            // Otherwise this really does look like a leftover from an
+            // earlier, separate generation whose end event never arrived —
+            // put it back before composing again so we don't build on top
+            // of an already-injected description.
+            console.warn(`[PersonaLibrary] (#${callId}, ${reason}) a swap has been active for ${age}ms — treating as a genuinely stale leftover from an earlier generation, restoring it before composing again.`);
             restorePatch('pre-empted-by-new-start');
         }
 
@@ -334,24 +393,27 @@ function applyVariantPatch(reason) {
             return;
         }
 
-        patchState = { active: true, id, original: baseline, restoreTimer: null };
+        // applyVariantPatch always operates on getActiveId() above, so `id`
+        // here is ALWAYS the currently-active persona — meaning
+        // power_user.persona_description (singular) is always the relevant
+        // field to patch alongside the dictionary entry, never a mismatch.
+        const originalSingular = String(pu.persona_description ?? '');
+        patchState = { active: true, id, original: baseline, originalSingular, restoreTimer: null, appliedAt: Date.now() };
         d.description = composed;
+        pu.persona_description = composed; // ← the field ST actually reads at generation time
         if (getActiveId() === id && typeof ctx()?.setPersonaDescription === 'function') {
             try { ctx().setPersonaDescription(); } catch { /* ignore */ }
         }
-        console.log(`[PersonaLibrary] (#${callId}) patch APPLIED for`, id);
+        console.log(`[PersonaLibrary] (#${callId}) patch APPLIED for`, id, '(both persona_descriptions[id].description and persona_description)');
 
-        // Safety net, same as PME: force-restore even if end events never
-        // fire (crash, dropped connection, extension conflict swallowing
-        // the event, etc.) instead of leaving the live description swapped
-        // forever.
-        patchState.restoreTimer = setTimeout(() => {
-            console.warn(`[PersonaLibrary] (#${callId}) safety-net timer fired — end event never arrived within 30s, forcing restore`);
-            restorePatch('safety-net-timer');
-        }, 30_000);
+        // Safety net, same idea as PME: force-restore even if end events
+        // never fire (crash, dropped connection, extension conflict
+        // swallowing the event, etc.). Flat 10-minute deadline — see
+        // SAFETY_NET_MS comment above for the reasoning.
+        armSafetyTimer(callId);
     } catch (e) {
         console.warn(`[PersonaLibrary] (#${callId}, ${reason}) variant injection failed; leaving the stored description untouched`, e);
-        patchState = { active: false, id: null, original: null, restoreTimer: null };
+        patchState = { active: false, id: null, original: null, originalSingular: null, restoreTimer: null, appliedAt: 0 };
     }
 }
 
@@ -423,7 +485,7 @@ export function registerVariantGenerationHook() {
         console.warn('[PersonaLibrary] no usable start event name resolved — the patch will NEVER be applied. Check the GENERATION_* logs above.');
     }
     if (!endEvents.length) {
-        console.warn('[PersonaLibrary] no usable end event name resolved — the patch will NEVER be restored automatically (only the 30s safety-net timer will save you). Check the GENERATION_* logs above.');
+        console.warn('[PersonaLibrary] no usable end event name resolved — the patch will NEVER be restored automatically (only the 10-minute safety-net timer will save you). Check the GENERATION_* logs above.');
     }
 
     const onStart = (...args) => {
