@@ -22,14 +22,16 @@ browse characters, instead of scrolling a cramped avatar strip.
 - `+ New Persona` right in the toolbar — create one without leaving the gallery
 
 **Detail view** — click any persona to open a large modal with three tabs:
-- **Details** — a clean, read-only summary: image, tags, and every part of the
+- **Details** — a clean, read-only summary: image and every part of the
   description laid out as labeled blocks
 - **Edit** — rename, replace the image, and write the description. Beyond the
   core description, add any number of **Additional Sections**: either a plain
   freeform block (Outfit, Mood, Scene Details, or your own custom title), or a
   ready-made **character-sheet category** (Appearance, Mentality, Character
   Lore, Social Relationships, and more) with its own labeled fields instead of
-  one big paragraph
+  one big paragraph. Drag the grip handle on any section to reorder it —
+  sections are folded into the final description in the order shown, so this
+  isn't just cosmetic
 - **Preview** — shows *exactly* what gets folded into the prompt the AI
   receives, live, as you edit — core description plus every enabled section,
   composed exactly the way SillyTavern will inject it
@@ -39,6 +41,45 @@ Everything (name, image, description, injection position/depth/role) writes
 through SillyTavern's own persona functions, so it stays fully compatible with
 the native Persona Management panel, other extensions, and your existing
 personas — nothing is stored in a separate, incompatible format.
+
+## Variants — dynamic, character/chat-aware blocks
+
+Sections (above) are permanent: once saved, they're baked into the persona's
+actual stored description and stay there. **Variants** are the opposite —
+blocks of text that only get added to the description *while a message is
+actually generating*, and are automatically reverted the instant generation
+ends or is stopped. Nothing lingers if something goes wrong mid-generation;
+the original description is always restored.
+
+Each variant can be gated by how it should activate:
+- **Manual** — a plain on/off toggle
+- **Default** — always active
+- **Character** — only active when a specific character (or characters) is
+  the one you're chatting with
+- **Chat** — only active in a specific chat
+- **Match** — active when a pattern (plain text or a `/regex/flags`) matches
+  the current character's description
+
+Variants can be grouped one level deep — a group has its own binding gating
+the whole group, and each child inside it is still independently evaluated,
+so a child can be off even inside an otherwise-active group. An optional
+wrapper template (with a `{{PROMPT}}` placeholder) and a custom joiner string
+are both available for how the composed result gets assembled.
+
+**Character bindings, and the "Reliable character bindings" setting:** by
+default, a variant bound to "this character" is matched by that character's
+avatar filename — the same method SillyTavern's own native persona–character
+connections use, and nothing about the character card is touched. The
+trade-off is that renaming the character's file, or re-importing the card,
+can silently break the binding. Turning on **Reliable character bindings**
+(Extensions panel → Persona Library) changes this: the first time you bind a
+variant to a character, a small identifier gets written into that
+character's own card data, using SillyTavern's standard per-character
+extension-data field. That identifier travels with the card through renames
+and export/re-import, so the binding keeps working. This only happens once,
+only for a character you actually bind something to — never proactively.
+Chat bindings are unaffected by this setting either way; those live inside
+the chat's own metadata already, so they're reliable regardless.
 
 ## Installation
 
@@ -73,38 +114,57 @@ Open the **Persona's** tab like normal — the gallery replaces the native panel
 there automatically. Click a persona to open the detail view; click the
 background outside the modal, or the X, to close it.
 
+Variants are configured per-persona alongside Sections in the Edit tab. The
+"Reliable character bindings" setting lives separately, under
+**Extensions → Persona Library**, since it's an install-wide behavior choice
+rather than something per-persona.
+
 ## How the description is built
 
-Each section you add (freeform or a structured category) is really just a
-labeled block of text. On save, your core description and every *enabled*
-section get joined together and written into SillyTavern's real persona
-description field — the same one the native panel uses. Nothing about the
-underlying data format changes; sections are purely an editing convenience on
-top of it. The **Preview** tab shows you that exact composed result before you
-even save, so there's no guessing what the AI will actually receive.
+Two layers, composed in order:
+
+1. **Sections** (permanent) — your core description plus every *enabled*
+   section get joined together and written into SillyTavern's real persona
+   description field on save — the same one the native panel uses. Nothing
+   about the underlying data format changes; sections are purely an editing
+   convenience on top of it.
+2. **Variants** (temporary) — at the moment generation starts, whichever
+   variants currently match their binding get appended to that same field,
+   and the original is restored the instant generation ends.
+
+The **Preview** tab shows you the Sections-only composed result before you
+even save — the base text every generation starts from, before any variants
+that happen to be active get layered on top of it at that moment.
 
 ## Notes / limitations
 
-- The section breakdown itself (which parts are "Outfit" vs "Lore", etc.) is
-  stored in this extension's own settings, keyed by persona. The *composed*
-  result is written into SillyTavern's native description field, so your
-  personas work normally even without this extension installed — but the
-  section structure specifically won't travel with a plain SillyTavern
-  backup/restore unless your extension settings are included too.
+- The Sections breakdown itself (which parts are "Outfit" vs "Lore", etc.),
+  and all Variants data, is stored in this extension's own settings, keyed by
+  persona (Variants) or by persona and character/chat (bindings). The
+  *composed* Sections result is written into SillyTavern's native description
+  field, so your personas work normally even without this extension
+  installed — but the Sections/Variants structure specifically won't travel
+  with a plain SillyTavern backup/restore unless your extension settings are
+  included too.
+- Chat-bound variants store their binding id inside that chat's own
+  `chat_metadata`, so they travel with the chat itself.
 - Built and tested against a recent SillyTavern release build. If something
   breaks after a SillyTavern update, please open an issue with what changed.
 
 ## Credits
 
 Visual direction inspired by [CharacterLibrary](https://github.com/Sillyanonymous/SillyTavern-CharacterLibrary).
-Built independently, for personas rather than characters.
-
-## License
-
-[Unlicense](LICENSE) — public domain dedication. Use it however you'd like.
+The Variants concept (dynamic, conditionally-active description blocks) draws
+on the same idea as [SillyTavern-Persona-Management-Extended](https://github.com/dmitryplyaskin/SillyTavern-Persona-Management-Extended)'s
+"Additional Descriptions," implemented independently here. Built independently
+overall, for personas rather than characters.
 
 ## A note on how this was built
 
 This extension was built through an extended conversation with Claude (Anthropic),
 directing every design decision, feature, and bug fix — but not hand-writing the
 code line by line. Sharing that plainly rather than leaving it unstated.
+
+## License
+
+[Unlicense](LICENSE) — public domain dedication. Use it however you'd like.
