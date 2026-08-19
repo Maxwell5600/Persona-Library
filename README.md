@@ -1,3 +1,5 @@
+**DEBGGUING Please refrain From Downloading for the time being. **
+
 # Persona Library
 
 A CharacterLibrary-style gallery for your **personas** in SillyTavern. Replaces
