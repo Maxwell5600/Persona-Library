@@ -1,0 +1,13 @@
+{
+    "display_name": "Persona Library",
+    "loading_order": 120,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "persona-library.css",
+    "author": "Maxwell",
+    "version": "1.4.0",
+    "homePage": "https://github.com/",
+    "auto_update": true,
+    "description": "A full-bleed image gallery for your personas: grid, search, tag filters, detail preview, sections, and Variants (character/chat-bound persona blocks). PTMT friendly."
+}
