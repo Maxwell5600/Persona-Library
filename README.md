@@ -1,3 +1,4 @@
+[README.md](https://github.com/user-attachments/files/31247037/README.md)
 # Persona Library
 
 A CharacterLibrary-style gallery for your **personas** in SillyTavern. Replaces
@@ -123,6 +124,37 @@ Variants are configured per-persona alongside Sections in the Edit tab. The
 "Reliable character bindings" setting lives separately, under
 **Extensions → Persona Library**, since it's an install-wide behavior choice
 rather than something per-persona.
+
+## Navigation & passthroughs to native SillyTavern UI
+
+A few small additions aimed at not getting in your way when you need
+something this extension doesn't (yet) cover itself:
+
+- **Back to Grid** — a button in the detail view's header (top-left, next to
+  the Use/Replace-image/Duplicate/Delete icons) that returns you to the
+  persona grid without leaving the tab. This is distinct from the X in the
+  same header, which closes the whole panel — Back to Grid is for "I'm done
+  with this persona, show me the others," X is for "I'm done with the tab
+  entirely."
+- **Worlds/Lorebooks** (book icon, top toolbar) — jumps straight to
+  SillyTavern's native World Info / Lorebook panel, since managing lorebooks
+  isn't something Persona Library reimplements.
+- **Open native Persona menu** (button above the gallery, always visible) —
+  Persona Library works by hiding SillyTavern's original Persona Management
+  UI and mounting its own gallery in the same spot. Some native
+  functionality doesn't have a Persona Library equivalent yet, so this
+  button temporarily reverses that: it hides the gallery and reveals the
+  real, original panel underneath. Click it again (now labeled **Back to
+  Persona Library**) to swap back. Nothing about your data changes either
+  way — it's purely a display toggle.
+
+The Worlds/Lorebooks button works by finding and clicking SillyTavern's own
+native World Info control, so if it doesn't do anything on your particular
+SillyTavern build/fork, the underlying element ID may differ from what's
+expected — please open an issue with what you see (or don't see) in the
+browser console. The native Persona menu toggle doesn't have this issue,
+since it's just flipping a display state Persona Library already controls
+rather than searching for anything.
 
 ## How the description is built
 
