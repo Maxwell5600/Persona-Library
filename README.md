@@ -128,7 +128,7 @@ rather than something per-persona.
 ## Navigation & passthroughs to native SillyTavern UI
 
 A few small additions aimed at not getting in your way when you need
-something this extension doesn't (yet) cover itself:
+something this extension May Not cover itself:
 
 - **Back to Grid** — a button in the detail view's header (top-left, next to
   the Use/Replace-image/Duplicate/Delete icons) that returns you to the
