@@ -323,6 +323,15 @@
     background: color-mix(in srgb, var(--pl-accent) 25%, transparent);
 }
 
+.pl-back-to-grid {
+    width: auto;
+    height: auto;
+    padding: 6px 10px;
+    gap: 6px;
+    font-size: 0.85em;
+    margin-right: auto; /* pushes the rest of headerActions to the right, separating "navigate" from "act on this persona" */
+}
+
 .pl-icon-btn.pl-icon-primary {
     border-color: var(--pl-accent);
     color: var(--pl-accent);
@@ -1202,9 +1211,40 @@
    sibling of our host (rather than hand-picking selectors like
    #user_avatar_block) guarantees nothing native, and nothing any OTHER
    extension injects into this same drawer (e.g. PTMT's dialogue colorizer
-   accordion), can show through beside the gallery. */
-body.pl-active #PersonaManagement > *:not(#persona-library-host) {
+   accordion), can show through beside the gallery.
+   :not(.pl-native-override) is the passthrough escape hatch — see
+   #persona-library-native-toggle in index.js. There's no native "open"
+   button to click through to here; the native UI is simply hidden by THIS
+   rule, so reaching it means temporarily suspending the rule itself rather
+   than triggering anything. Also exempts our own always-visible toggle
+   button so it doesn't hide itself along with everything else. */
+body.pl-active:not(.pl-native-override) #PersonaManagement > *:not(#persona-library-host):not(#persona-library-native-toggle) {
     display: none !important;
+}
+
+/* Mirror image of the rule above: while override mode is on, hide OUR host
+   instead, so the native UI (now unhidden) doesn't render underneath/behind
+   it. The toggle button itself is exempted here the same way, so it stays
+   visible to switch back regardless of which mode is active. */
+body.pl-active.pl-native-override #persona-library-host {
+    display: none !important;
+}
+
+#persona-library-native-toggle {
+    align-self: flex-start;
+    margin: 4px 0 8px;
+    padding: 5px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--pl-border, #444);
+    background: var(--pl-surface-2, #2a2a2a);
+    color: inherit;
+    font-family: inherit;
+    font-size: 0.82em;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    z-index: 1;
 }
 
 /* #PersonaManagement itself is a flex column with padding/gap meant for the

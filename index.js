@@ -9,6 +9,7 @@ import { stAdapter, ctx, registerVariantGenerationHook } from './modules/st-adap
 import { mountSettingsPanel } from './modules/settings-panel.js';
 
 const HOST_ID = 'persona-library-host';
+const NATIVE_TOGGLE_ID = 'persona-library-native-toggle';
 let instance = null;
 let observer = null;
 let mountQueued = false;
@@ -27,6 +28,42 @@ function personaBlock() {
         ?? null;
 }
 
+function setNativeToggleLabel(btn) {
+    const showingNative = document.body.classList.contains('pl-native-override');
+    btn.textContent = '';
+    const icon = document.createElement('i');
+    icon.className = showingNative ? 'fa-solid fa-arrow-left' : 'fa-solid fa-arrow-up-right-from-square';
+    const label = document.createElement('span');
+    label.textContent = showingNative ? 'Back to Persona Library' : 'Open native Persona menu';
+    btn.append(icon, label);
+    btn.title = showingNative
+        ? 'Return to the Persona Library gallery'
+        : 'Temporarily reveal SillyTavern\'s original Persona Management UI (for functions Persona Library doesn\'t cover yet)';
+}
+
+function ensureNativeToggle(block) {
+    let btn = document.getElementById(NATIVE_TOGGLE_ID);
+    if (btn) {
+        // Reparent if PTMT or similar moved #PersonaManagement without
+        // removing this button — same defensive pattern as the host itself.
+        if (btn.parentElement !== block) block.prepend(btn);
+        return btn;
+    }
+    btn = document.createElement('button');
+    btn.id = NATIVE_TOGGLE_ID;
+    btn.type = 'button';
+    // Deliberately NOT inside #persona-library-host: the CSS hides that
+    // whole element while override mode is on, and this button needs to
+    // stay visible in BOTH modes so there's always a way to switch back.
+    btn.addEventListener('click', () => {
+        document.body.classList.toggle('pl-native-override');
+        setNativeToggleLabel(btn);
+    });
+    setNativeToggleLabel(btn);
+    block.prepend(btn);
+    return btn;
+}
+
 function mount() {
     if (document.getElementById(HOST_ID)) return true;
     const block = personaBlock();
@@ -36,6 +73,7 @@ function mount() {
     const host = document.createElement('div');
     host.id = HOST_ID;
     block.prepend(host);
+    ensureNativeToggle(block);
 
     try {
         instance = createPersonaLibrary(host, stAdapter);
@@ -54,7 +92,9 @@ function unmount() {
     try { instance?.destroy(); } catch { /* ignore */ }
     instance = null;
     document.getElementById(HOST_ID)?.remove();
+    document.getElementById(NATIVE_TOGGLE_ID)?.remove();
     document.body.classList.remove('pl-active');
+    document.body.classList.remove('pl-native-override');
 }
 
 function watch() {

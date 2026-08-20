@@ -154,6 +154,53 @@ export function createPersonaLibrary(container, adapter) {
 
     const count = el('span', { class: 'pl-count' });
 
+    // -- passthroughs to native ST UI that this extension doesn't (yet)
+    // reimplement itself, e.g. persona-bound lorebook assignment and the
+    // native Persona Management panel's own remaining functions. Rather
+    // than reimplement those here, just click through to the real thing.
+    //
+    // IMPORTANT CAVEAT: these are best-effort selector guesses, not
+    // confirmed against a live SillyTavern DOM. Native element IDs vary
+    // across ST versions/forks and I don't have a way to inspect yours
+    // directly. If a button here doesn't do anything, open devtools,
+    // right-click the real native button/tab you want it to reach ->
+    // Inspect, and send me its id/class so this can be corrected to the
+    // exact selector for your build \u2014 same approach that nailed down the
+    // GENERATION_STARTED/etc event names earlier.
+    function clickThrough(candidates, label) {
+        for (const sel of candidates) {
+            const target = document.querySelector(sel);
+            if (target) {
+                console.log(`[PersonaLibrary] passthrough "${label}": found via selector "${sel}", clicking`, target);
+                target.click();
+                return true;
+            }
+        }
+        console.warn(`[PersonaLibrary] passthrough "${label}": none of these selectors matched anything \u2014`, candidates,
+            '\u2014 inspect the real native button and tell Claude its id/class so this can be corrected.');
+        globalThis.toastr?.warning?.(`Couldn't find the native "${label}" button \u2014 see console for how to fix this.`, 'Persona Library');
+        return false;
+    }
+
+    const loreBtn = el('button', {
+        class: 'pl-icon-btn', type: 'button', title: 'Open Worlds/Lorebooks (native)',
+        onclick: () => clickThrough([
+            '#WIDrawerIcon',
+            '#WorldInfo',
+            '#world_info_button',
+            '.drawer-icon[data-target="#WorldInfo"]',
+            '#world-info-button',
+        ], 'Worlds/Lorebooks'),
+    }, [el('i', { class: 'fa-solid fa-book' })]);
+
+    // NOTE: there's no equivalent "native Persona Management" button here.
+    // That panel isn't reached by clicking through to something else — it's
+    // the actual #PersonaManagement drawer Persona Library mounts inside of
+    // and hides via CSS (see index.js/persona-library.css). Reaching it is
+    // a toggle (index.js's #persona-library-native-toggle button, always
+    // visible above the gallery), not a click-through, so it lives there
+    // instead of here.
+
     const newBtn = adapter.createPersona && el('button', {
         class: 'pl-btn pl-primary pl-new-btn', type: 'button',
         onclick: async () => {
@@ -222,7 +269,7 @@ export function createPersonaLibrary(container, adapter) {
     document.body.appendChild(lightbox);
 
     root.append(
-        el('div', { class: 'pl-toolbar' }, [newBtn, search, sort, size, count].filter(Boolean)),
+        el('div', { class: 'pl-toolbar' }, [newBtn, search, sort, size, count, loreBtn].filter(Boolean)),
         el('div', { class: 'pl-body' }, [gridWrap]),
     );
 
@@ -992,7 +1039,29 @@ export function createPersonaLibrary(container, adapter) {
             class: `pl-icon-btn ${extraClass}`.trim(), type: 'button', title, onclick,
         }, [el('i', { class: `fa-solid ${icon}` })]);
 
+        const backToGridBtn = el('button', {
+            class: 'pl-icon-btn pl-back-to-grid', type: 'button', title: 'Back to grid',
+        }, [el('i', { class: 'fa-solid fa-grip' }), el('span', { text: 'Back to Grid' })]);
+        // stopPropagation on 'click' alone wasn't enough \u2014 confirmed still
+        // closing the whole tab. Very likely cause: SillyTavern's native
+        // drawer-close-on-outside-click listener almost certainly keys off
+        // mousedown/pointerdown (a common pattern, so the drawer closes
+        // before a subsequent click can act on something else), which fire
+        // and bubble to document BEFORE the click event exists at all \u2014
+        // stopping propagation on click does nothing to an earlier event
+        // that already escaped. Covering every plausible early event type
+        // here, scoped ONLY to this button (not the whole .pl-detail modal,
+        // and NOT the X button) so X's existing behavior stays exactly as
+        // it was, per instruction.
+        for (const type of ['pointerdown', 'mousedown', 'touchstart', 'click']) {
+            backToGridBtn.addEventListener(type, (e) => {
+                e.stopPropagation();
+                if (type === 'click') { selectedId = null; renderGrid(); renderDetail(); }
+            });
+        }
+
         const headerActions = el('div', { class: 'pl-header-actions' }, [
+            backToGridBtn,
             iconBtn('fa-check', p.id === activeId ? 'In use' : 'Use this persona', () => use(p.id), p.id === activeId ? 'pl-icon-active' : 'pl-icon-primary'),
             adapter.replaceAvatar && iconBtn('fa-image', 'Replace image', () => fileInput.click()),
             adapter.duplicatePersona && iconBtn('fa-clone', 'Duplicate', () => run(() => adapter.duplicatePersona(p.id), 'Duplicated.', 'Could not duplicate.')),
