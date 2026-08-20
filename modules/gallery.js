@@ -193,6 +193,81 @@ export function createPersonaLibrary(container, adapter) {
         ], 'Worlds/Lorebooks'),
     }, [el('i', { class: 'fa-solid fa-book' })]);
 
+    // -- passthrough for a single persona's native "Persona Lore" binding.
+    // Confirmed against the live DOM (2026-08-20): the native control is a
+    // single, non-repeated element,
+    //   <div id="persona_lore_button" class="menu_button fa-solid fa-globe interactable" ...>
+    // and confirmed by the person testing it directly: shift-clicking it
+    // opens the "Persona Lorebook for <name>" popup (World Info select +
+    // OK), acting on whichever persona is currently selected in the native
+    // list. That's the actual attach/change-a-lorebook-for-this-persona UI.
+    // (A plain click only opens the popup when nothing is linked yet — once
+    // a lorebook IS linked, plain click "loads" it instead of reopening the
+    // picker, which is why shift-click is used unconditionally below.)
+    //
+    // Because the control acts on "whichever persona is currently selected
+    // in the native list", not on a persona we can address directly, this
+    // is still a two-step passthrough:
+    //   1. Find and click this persona's entry in the native (CSS-hidden)
+    //      avatar strip, #user_avatar_block, so it becomes the selected one.
+    //   2. Click #persona_lore_button, which then opens the popup for it.
+    // REMAINING CAVEAT: step 2 is now confirmed working; step 1 (finding
+    // this persona's specific entry in #user_avatar_block) is still a
+    // best-effort guess — I haven't seen that markup. If the popup opens
+    // for the wrong persona, open devtools, inspect this persona's entry
+    // in the native avatar list, and send me its id/class/attributes so
+    // step 1 can be corrected too.
+    function openPersonaLore(id, name) {
+        const avatarCandidates = [
+            `#user_avatar_block [imgfile="${CSS.escape(id)}"]`,
+            `#user_avatar_block [data-avatar="${CSS.escape(id)}"]`,
+            `#user_avatar_block .avatar-container[title="${CSS.escape(id)}"]`,
+            `#user_avatar_block img[src*="${CSS.escape(id)}"]`,
+        ];
+        let avatarEl = null;
+        for (const sel of avatarCandidates) {
+            const found = document.querySelector(sel);
+            if (found) { avatarEl = found; break; }
+        }
+        if (!avatarEl) {
+            console.warn(`[PersonaLibrary] passthrough "Persona Lore": couldn't find "${name}"'s entry in the native avatar list using`, avatarCandidates,
+                '\u2014 inspect the native list (#user_avatar_block) and tell Claude the right selector.');
+            globalThis.toastr?.warning?.(`Couldn't locate "${name}" in the native list \u2014 see console for how to fix this.`, 'Persona Library');
+            return;
+        }
+        // The element matched by the selector is sometimes the container,
+        // sometimes a child <img> inside it — click the closest
+        // .avatar-container so any native handler bound at that level
+        // definitely fires.
+        (avatarEl.closest('.avatar-container') ?? avatarEl).click();
+
+        // Give the native UI a tick to update its "currently selected
+        // persona" state before we act on #persona_lore_button.
+        setTimeout(() => {
+            const loreBtn = document.querySelector('#persona_lore_button');
+            if (!loreBtn) {
+                console.warn('[PersonaLibrary] passthrough "Persona Lore": #persona_lore_button not found in the DOM.');
+                globalThis.toastr?.warning?.('Couldn\'t find the native Persona Lore button \u2014 see console.', 'Persona Library');
+                return;
+            }
+            // Plain click is state-dependent: if this persona has no
+            // lorebook linked yet, a plain click opens the "Link to Persona
+            // Lorebook" popup (which is why the first test worked) — but
+            // once one IS linked, a plain click just "loads" it instead of
+            // reopening the popup to change it. Per the native tooltip,
+            // shift/alt-click (or long-press) opens the popup regardless of
+            // state, so dispatch a synthetic shift-click unconditionally —
+            // that way this button always opens the picker, whether or not
+            // a lorebook is already attached.
+            loreBtn.dispatchEvent(new MouseEvent('click', {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                shiftKey: true,
+            }));
+        }, 50);
+    }
+
     // NOTE: there's no equivalent "native Persona Management" button here.
     // That panel isn't reached by clicking through to something else — it's
     // the actual #PersonaManagement drawer Persona Library mounts inside of
@@ -260,13 +335,27 @@ export function createPersonaLibrary(container, adapter) {
     // So nesting the modal inside `.pl-root`/`.pl-body` and setting it to
     // `position: fixed` never actually reached the real browser viewport;
     // it stayed trapped inside whatever (undefined) size `.pl-root` had.
-    // Mounting `.pl-detail` directly on `document.body` sidesteps that
-    // entirely — it also carries the `.pl-root` class so it still picks up
-    // the same theme variables and box-sizing reset. The lightbox is
-    // mounted the same way, with a higher z-index, so it always renders
-    // above the detail modal it was opened from.
-    document.body.appendChild(detail);
-    document.body.appendChild(lightbox);
+    //
+    // Mounting on `container` (== #persona-library-host, one level up from
+    // `.pl-root`, with none of that containment CSS) sidesteps that just as
+    // well — AND, unlike mounting on `document.body`, keeps the modal a
+    // real DOM descendant of SillyTavern's own drawer wrapper
+    // (#PersonaManagement). That matters: SillyTavern's native "click
+    // outside the open drawer closes it" logic checks DOM containment
+    // against that wrapper. `document.body` placement put every click
+    // anywhere in this modal — Back to Grid, Duplicate, Delete, Save, all
+    // of it — structurally outside that wrapper despite rendering visually
+    // on top of it, so SillyTavern treated each one as a background click
+    // and closed the whole Persona drawer. `container` is still inside
+    // #PersonaManagement (index.js prepends the host there), so this fixes
+    // that at the root instead of trying to intercept/stop each click.
+    //
+    // Bonus: this also means the modal now correctly hides itself when the
+    // native-override toggle is used, since that hides #persona-library-host
+    // wholesale — on document.body it sat outside that rule and could stay
+    // floating on top of the native UI while switched over.
+    container.appendChild(detail);
+    container.appendChild(lightbox);
 
     root.append(
         el('div', { class: 'pl-toolbar' }, [newBtn, search, sort, size, count, loreBtn].filter(Boolean)),
@@ -1041,29 +1130,24 @@ export function createPersonaLibrary(container, adapter) {
 
         const backToGridBtn = el('button', {
             class: 'pl-icon-btn pl-back-to-grid', type: 'button', title: 'Back to grid',
+            // The earlier version of this button worked around the whole
+            // drawer closing by stopping propagation on every early event
+            // type (pointerdown/mousedown/touchstart/click). That masked
+            // the symptom on this one button without touching the actual
+            // cause, which turned out to be structural: this modal was
+            // mounted on document.body, outside SillyTavern's own drawer
+            // wrapper, so ANY click anywhere in the modal read as a
+            // background click to SillyTavern — not just this button. Now
+            // fixed at the source (see the `container.appendChild(detail)`
+            // comment above), so this can go back to being a plain click.
+            onclick: () => { selectedId = null; renderGrid(); renderDetail(); },
         }, [el('i', { class: 'fa-solid fa-grip' }), el('span', { text: 'Back to Grid' })]);
-        // stopPropagation on 'click' alone wasn't enough \u2014 confirmed still
-        // closing the whole tab. Very likely cause: SillyTavern's native
-        // drawer-close-on-outside-click listener almost certainly keys off
-        // mousedown/pointerdown (a common pattern, so the drawer closes
-        // before a subsequent click can act on something else), which fire
-        // and bubble to document BEFORE the click event exists at all \u2014
-        // stopping propagation on click does nothing to an earlier event
-        // that already escaped. Covering every plausible early event type
-        // here, scoped ONLY to this button (not the whole .pl-detail modal,
-        // and NOT the X button) so X's existing behavior stays exactly as
-        // it was, per instruction.
-        for (const type of ['pointerdown', 'mousedown', 'touchstart', 'click']) {
-            backToGridBtn.addEventListener(type, (e) => {
-                e.stopPropagation();
-                if (type === 'click') { selectedId = null; renderGrid(); renderDetail(); }
-            });
-        }
 
         const headerActions = el('div', { class: 'pl-header-actions' }, [
             backToGridBtn,
             iconBtn('fa-check', p.id === activeId ? 'In use' : 'Use this persona', () => use(p.id), p.id === activeId ? 'pl-icon-active' : 'pl-icon-primary'),
             adapter.replaceAvatar && iconBtn('fa-image', 'Replace image', () => fileInput.click()),
+            iconBtn('fa-book-bookmark', 'Persona Lore (native)', () => openPersonaLore(p.id, p.name)),
             adapter.duplicatePersona && iconBtn('fa-clone', 'Duplicate', () => run(() => adapter.duplicatePersona(p.id), 'Duplicated.', 'Could not duplicate.')),
             adapter.deletePersona && iconBtn('fa-trash', 'Delete', async () => {
                 const ask = adapter.confirm ?? (async (m) => window.confirm(m));
@@ -1087,7 +1171,20 @@ export function createPersonaLibrary(container, adapter) {
             }),
             el('button', {
                 class: 'pl-detail-close', type: 'button', title: 'Close',
-                onclick: () => { selectedId = null; renderGrid(); renderDetail(); },
+                // Reset our own state back to the grid first (so if the
+                // native toggle below doesn't fire for some reason, or the
+                // person reopens the tab, they land on the grid rather than
+                // back inside whatever detail view they were just in) —
+                // then click SillyTavern's own drawer-icon toggle to
+                // actually close the tab. That's the real, separate control
+                // for that (title="Persona Management", down in the main
+                // nav) — confirmed against the live DOM, not a guess.
+                onclick: () => {
+                    selectedId = null;
+                    renderGrid();
+                    renderDetail();
+                    document.querySelector('.drawer-icon[title="Persona Management"]')?.click();
+                },
             }, [el('i', { class: 'fa-solid fa-xmark' })]),
         ].filter(Boolean));
 
