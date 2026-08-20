@@ -1179,6 +1179,42 @@
     .pl-select {
         max-width: none;
     }
+
+    /* "Back to Grid" carries a text label the other header icon buttons
+       don't, so it's the widest thing in a row that also has to fit the
+       persona name + ACTIVE pill. At narrow widths those two collide.
+       Dropping the label and shrinking back to the same 34x34 square as
+       every other .pl-icon-btn frees that space back up — the icon alone
+       (fa-grip) still reads fine, and it now looks consistent with its
+       neighbors instead of like a special case. */
+    .pl-back-to-grid {
+        width: 34px;
+        height: 34px;
+        padding: 0;
+    }
+
+    .pl-back-to-grid span {
+        display: none;
+    }
+
+    /* Even icon-only, .pl-header-actions (Use / Image / Persona Lore /
+       Duplicate / Delete / Save / X) is a row of fixed-size buttons that
+       never shrinks — on a narrow screen it just claims space and forces
+       .pl-name-input into whatever's left, which can end up too small to
+       read. Wrapping the header onto two rows (name + ACTIVE pill on their
+       own full-width row, action icons wrapping below) fixes that without
+       hiding or truncating anything else. */
+    .pl-detail-header {
+        flex-wrap: wrap;
+    }
+
+    .pl-detail-header-title {
+        flex: 1 1 100%;
+    }
+
+    .pl-header-actions {
+        flex-wrap: wrap;
+    }
 }
 
 @container (max-width: 340px) {
