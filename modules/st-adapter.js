@@ -18,7 +18,7 @@ const SECTIONS_KEY = 'personaLibrarySections';
 const VARIANTS_KEY = 'personaLibraryVariants';
 const CHAR_BINDING_FIELD = 'personaLibraryBindingId';
 const CHAT_BINDING_KEY = 'personaLibraryBindingId';
-const DEFAULTS = { sort: 'name', tile: 150, query: '', reliableCharacterBindings: false };
+const DEFAULTS = { sort: 'name', tile: 150, query: '', reliableCharacterBindings: false, lastSeenChangelogVersion: '' };
 
 export const ctx = () => globalThis.SillyTavern?.getContext?.() ?? null;
 
@@ -597,10 +597,47 @@ export function subscribe(cb) {
     const es = c?.eventSource;
     const types = c?.eventTypes ?? c?.event_types ?? {};
     if (!es?.on) return () => {};
-    const names = [types.SETTINGS_UPDATED, types.SETTINGS_LOADED_AFTER, types.APP_READY, 'persona_updated']
+    const names = [types.SETTINGS_UPDATED, types.SETTINGS_LOADED_AFTER, types.APP_READY, types.CHAT_CHANGED, types.PERSONA_CHANGED, 'persona_updated']
         .filter(Boolean);
     for (const n of names) es.on(n, cb);
     return () => { for (const n of names) es.removeListener?.(n, cb); };
+}
+
+/*
+ * A chat-lock indicator + one-click unlock (reading/clearing ST's native
+ * chat_metadata.persona) was built and shipped briefly in this version's
+ * development, but was rolled back before release: in practice it reported
+ * "Unlocked" without actually changing anything observable — the lock/
+ * unlock semantics evidently don't work the way assumed here, and rather
+ * than keep guessing at SillyTavern's actual internals through trial and
+ * error, this was pulled entirely. Chat-lock is left to SillyTavern's own
+ * native Persona Management panel ("Open native Persona menu") for now.
+ * If this is revisited, verify the actual read/write behavior directly
+ * against a live chat before building UI on top of it again.
+ */
+
+/**
+ * Best-effort token count for a piece of text, using whatever tokenizer the
+ * user actually has configured (via SillyTavern's own getTokenCountAsync)
+ * so the number matches what they'd really be spending. Falls back to a
+ * rough chars/4 estimate if that's unavailable for any reason — still
+ * useful as a ballpark, just labelled "~" either way since it's an
+ * estimate, not the exact count that'll appear in an actual generation
+ * (which also includes the wrapper template, joiners, and everything else
+ * around it).
+ */
+export async function getTokenCount(text) {
+    const t = text ?? '';
+    if (!t.trim()) return 0;
+    try {
+        const c = ctx();
+        if (typeof c?.getTokenCountAsync === 'function') {
+            return await c.getTokenCountAsync(t);
+        }
+    } catch (e) {
+        console.warn('[PersonaLibrary] getTokenCountAsync failed, falling back to an estimate', e);
+    }
+    return Math.ceil(t.length / 4);
 }
 
 export async function setActive(id) {
@@ -783,4 +820,5 @@ export const stAdapter = {
     ensureChatBindingId,
     getCurrentChatLabel,
     composeVariants,
+    getTokenCount,
 };

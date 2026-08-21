@@ -31,7 +31,7 @@
  *            created: number, lastUsed: number }
  */
 
-import { newItem, newGroup, normalizeVariants, composeVariants, collectBindingRefs } from './variants.js';
+import { newItem, newGroup, cloneNode, normalizeVariants, composeVariants, collectBindingRefs } from './variants.js';
 
 const POSITIONS = [
     ['', 'Default (In Prompt)'],
@@ -297,8 +297,28 @@ export function createPersonaLibrary(container, adapter) {
     const grid = el('div', { class: 'pl-grid' });
     const gridWrap = el('div', { class: 'pl-grid-wrap' }, [grid]);
     const detail = el('div', { class: 'pl-detail pl-root', hidden: true });
+
+    // Shared by every way of leaving the detail view (backdrop click, Back
+    // to Grid, the X button) so unsaved edits can never be discarded
+    // silently through one path just because the warning was only wired
+    // into another. `afterClose` lets a specific path (the X button) still
+    // do its own extra thing (closing the native tab) — only AFTER the
+    // person has actually confirmed discarding, never before.
+    function closeDetail(afterClose) {
+        const proceed = () => {
+            dirty = false;
+            selectedId = null;
+            renderGrid();
+            renderDetail();
+            afterClose?.();
+        };
+        if (!dirty) { proceed(); return; }
+        const ask = adapter.confirm ?? (async (m) => window.confirm(m));
+        Promise.resolve(ask('You have unsaved changes. Discard them?')).then((ok) => { if (ok) proceed(); });
+    }
+
     detail.addEventListener('click', (e) => {
-        if (e.target === detail) { selectedId = null; renderGrid(); renderDetail(); }
+        if (e.target === detail) closeDetail();
     });
 
     // -- click-to-enlarge lightbox for the hero image, above the detail modal --
@@ -732,27 +752,110 @@ export function createPersonaLibrary(container, adapter) {
         const list = el('div', { class: 'pl-variants-list' });
         const markDirty = () => { dirty = true; };
 
-        function renderItemRow(node, container, onRemove) {
+        // Filters the list below by title/content match. Purely a display
+        // filter — it never touches draft.nodes, so it can't affect what
+        // gets saved or composed. A group is shown if its own title
+        // matches OR any child matches. Most useful once a persona has a
+        // lot of variants; harmless and stays out of the way otherwise.
+        let searchQuery = '';
+        // Word-boundary matching, not plain substring — "Ear" as a search
+        // should match "Ear", "Ears", "Earring", but NOT "Beard" or "Year"
+        // just because they happen to contain the letters e-a-r somewhere
+        // in the middle. Only anchors the START of the match (not the
+        // end), so prefix matches within a longer word (Ear -> Earring)
+        // still work; it just won't match mid-word.
+        // Deliberately NOT using regex \b here — \b is ASCII-only in JS, so
+        // it silently misclassifies accented/non-Latin letters (é, ü, 日,
+        // etc.) as "not word characters", which breaks this exact same
+        // fix for anything but plain ASCII titles. Using a Unicode-aware
+        // negative lookbehind (\p{L}/\p{N}) instead so accented and
+        // non-Latin persona/variant names get the same correct behavior.
+        // And boundary anchoring only makes sense when the query ITSELF
+        // starts with a letter/number/underscore — a query starting with
+        // punctuation (e.g. "(test)") has no valid boundary position
+        // directly before it and would silently never match if forced on;
+        // falls back to plain substring matching for those instead, which
+        // is the sensible behavior there anyway.
+        function wordBoundaryMatch(haystack, query) {
+            if (!query) return true;
+            const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const startsWithWordChar = /^[\p{L}\p{N}_]/u.test(query);
+            const pattern = startsWithWordChar ? `(?<![\\p{L}\\p{N}_])${escaped}` : escaped;
+            return new RegExp(pattern, 'iu').test(haystack);
+        }
+        function nodeMatches(n) {
+            if (!searchQuery) return true;
+            if (wordBoundaryMatch(n.title ?? '', searchQuery)) return true;
+            if (n.kind === 'item' && wordBoundaryMatch(n.content ?? '', searchQuery)) return true;
+            if (n.kind === 'group') return (n.children ?? []).some((c) => nodeMatches(c));
+            return false;
+        }
+        const searchInput = el('input', {
+            type: 'search', class: 'pl-variants-search', placeholder: 'Filter variants by title or text\u2026',
+            oninput: () => { searchQuery = searchInput.value.trim().toLowerCase(); renderList(); },
+        });
+
+        // Token counts — a best-effort estimate (see adapter.getTokenCount,
+        // which uses whatever tokenizer is actually configured) of what
+        // each block costs, plus a running total across EVERYTHING
+        // configured here regardless of whether it's currently active —
+        // "if all of this were switched on, here's the ceiling." What's
+        // actually being spent right now, for just the variants currently
+        // matching, is shown separately on the Preview tab instead — this
+        // total is about inventory, that one's about live cost.
+        const totalTokensEl = el('span', { class: 'pl-variants-token-total' });
+        let tokenRunId = 0;
+        async function refreshTokenCounts() {
+            if (!adapter.getTokenCount) return;
+            const myRun = ++tokenRunId;
+            const badges = Array.from(list.querySelectorAll('[data-pl-token-badge]'));
+            let total = 0;
+            for (const badge of badges) {
+                const text = badge.getAttribute('data-pl-token-text') ?? '';
+                const count = text.trim() ? await adapter.getTokenCount(text) : 0;
+                if (myRun !== tokenRunId) return; // superseded by a newer render/edit — drop stale results
+                total += count;
+                badge.textContent = text.trim() ? `~${count} tok` : '';
+            }
+            if (myRun !== tokenRunId) return;
+            totalTokensEl.textContent = total ? `~${total} tokens total across everything configured here` : '';
+        }
+        let tokenDebounceTimer = null;
+        const scheduleTokenRefresh = () => { clearTimeout(tokenDebounceTimer); tokenDebounceTimer = setTimeout(refreshTokenCounts, 400); };
+
+        function renderItemRow(node, container, onRemove, onDuplicate) {
             const titleInput = el('input', {
                 class: 'pl-section-title', type: 'text', value: node.title,
                 oninput: () => { markDirty(); node.title = titleInput.value; },
             });
+            const badge = el('span', {
+                class: 'pl-token-badge', 'data-pl-token-badge': '', 'data-pl-token-text': node.content ?? '',
+            });
+            const dupBtn = el('button', {
+                class: 'pl-icon-btn', type: 'button', title: 'Duplicate', onclick: onDuplicate,
+            }, [el('i', { class: 'fa-solid fa-copy' })]);
             const removeBtn = el('button', {
                 class: 'pl-icon-btn pl-icon-danger', type: 'button', title: 'Remove variant', onclick: onRemove,
             }, [el('i', { class: 'fa-solid fa-xmark' })]);
             const contentInput = el('textarea', {
                 class: 'pl-section-content', spellcheck: 'false', placeholder: 'What gets added when this is active\u2026',
-                oninput: () => { markDirty(); node.content = contentInput.value; },
+                oninput: () => {
+                    markDirty();
+                    node.content = contentInput.value;
+                    badge.setAttribute('data-pl-token-text', contentInput.value);
+                    scheduleTokenRefresh();
+                },
             });
             contentInput.value = node.content ?? '';
             const binding = buildBindingEditor(node, canEdit, markDirty);
             if (!canEdit) {
                 titleInput.setAttribute('disabled', '');
+                dupBtn.setAttribute('disabled', '');
                 removeBtn.setAttribute('disabled', '');
                 contentInput.setAttribute('disabled', '');
             }
             container.append(el('div', { class: 'pl-variant-item' }, [
-                el('div', { class: 'pl-section-row-head' }, [titleInput, removeBtn]),
+                el('div', { class: 'pl-section-row-head' }, [titleInput, badge, dupBtn, removeBtn]),
                 contentInput,
                 binding,
             ]));
@@ -761,11 +864,39 @@ export function createPersonaLibrary(container, adapter) {
         function renderList() {
             list.replaceChildren();
             draft.nodes.forEach((n, i) => {
+                if (searchQuery && !nodeMatches(n)) return;
                 if (n.kind === 'group') {
+                    const isCollapsed = !!n.collapsed;
+                    // While actively searching, always show a matching
+                    // group's contents regardless of its stored collapsed
+                    // state — otherwise a search result could be hidden
+                    // behind a collapsed group with no way to see what
+                    // actually matched. Clearing the search reverts to
+                    // whatever the group's own stored state was.
+                    const effectivelyCollapsed = isCollapsed && !searchQuery;
                     const titleInput = el('input', {
                         class: 'pl-section-title', type: 'text', value: n.title,
                         oninput: () => { markDirty(); n.title = titleInput.value; },
                     });
+                    const collapseBtn = el('button', {
+                        class: 'pl-icon-btn pl-variant-group-collapse-btn', type: 'button',
+                        title: isCollapsed ? 'Expand group' : 'Collapse group',
+                        'aria-expanded': isCollapsed ? 'false' : 'true',
+                        onclick: () => {
+                            // Saved like any other field (title, binding,
+                            // etc.) — click Save to persist across
+                            // reopening the editor or reloading the page.
+                            // Never read by isNodeActive/composeVariants;
+                            // purely display state.
+                            n.collapsed = !isCollapsed;
+                            markDirty();
+                            renderList();
+                        },
+                    }, [el('i', { class: `fa-solid ${isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down'}` })]);
+                    const dupBtn = el('button', {
+                        class: 'pl-icon-btn', type: 'button', title: 'Duplicate group (and everything in it)',
+                        onclick: () => { markDirty(); draft.nodes.splice(i + 1, 0, cloneNode(n)); renderList(); },
+                    }, [el('i', { class: 'fa-solid fa-copy' })]);
                     const removeBtn = el('button', {
                         class: 'pl-icon-btn pl-icon-danger', type: 'button', title: 'Remove group',
                         onclick: () => { markDirty(); draft.nodes.splice(i, 1); renderList(); },
@@ -775,25 +906,44 @@ export function createPersonaLibrary(container, adapter) {
                     const renderChildren = () => {
                         childrenWrap.replaceChildren();
                         (n.children ?? []).forEach((child, ci) => {
-                            renderItemRow(child, childrenWrap, () => { markDirty(); n.children.splice(ci, 1); renderChildren(); });
+                            if (searchQuery && !nodeMatches(child) && !wordBoundaryMatch(n.title ?? '', searchQuery)) return;
+                            renderItemRow(
+                                child, childrenWrap,
+                                () => { markDirty(); n.children.splice(ci, 1); renderChildren(); },
+                                () => { markDirty(); n.children.splice(ci + 1, 0, cloneNode(child)); renderChildren(); },
+                            );
                         });
+                        refreshTokenCounts();
                     };
-                    renderChildren();
+                    if (!effectivelyCollapsed) renderChildren();
                     const addChildBtn = el('button', {
                         class: 'pl-btn', type: 'button', text: '+ Item in group',
                         onclick: () => { markDirty(); n.children = n.children ?? []; n.children.push(newItem('New item')); renderChildren(); },
                     });
-                    if (!canEdit) { titleInput.setAttribute('disabled', ''); removeBtn.setAttribute('disabled', ''); addChildBtn.setAttribute('disabled', ''); }
-                    list.append(el('div', { class: 'pl-variant-group' }, [
-                        el('div', { class: 'pl-section-row-head' }, [el('i', { class: 'fa-solid fa-folder' }), titleInput, removeBtn]),
-                        binding,
-                        childrenWrap,
-                        canEdit ? addChildBtn : null,
+                    if (!canEdit) { titleInput.setAttribute('disabled', ''); dupBtn.setAttribute('disabled', ''); removeBtn.setAttribute('disabled', ''); addChildBtn.setAttribute('disabled', ''); }
+                    const childCount = (n.children ?? []).length;
+                    list.append(el('div', { class: `pl-variant-group${effectivelyCollapsed ? ' pl-variant-group-collapsed' : ''}` }, [
+                        el('div', { class: 'pl-section-row-head' }, [
+                            collapseBtn,
+                            el('i', { class: 'fa-solid fa-folder' }),
+                            titleInput,
+                            effectivelyCollapsed ? el('span', { class: 'pl-variant-group-count', text: `${childCount} item${childCount === 1 ? '' : 's'}` }) : null,
+                            dupBtn,
+                            removeBtn,
+                        ].filter(Boolean)),
+                        effectivelyCollapsed ? null : binding,
+                        effectivelyCollapsed ? null : childrenWrap,
+                        effectivelyCollapsed ? null : (canEdit ? addChildBtn : null),
                     ].filter(Boolean)));
                 } else {
-                    renderItemRow(n, list, () => { markDirty(); draft.nodes.splice(i, 1); renderList(); });
+                    renderItemRow(
+                        n, list,
+                        () => { markDirty(); draft.nodes.splice(i, 1); renderList(); },
+                        () => { markDirty(); draft.nodes.splice(i + 1, 0, cloneNode(n)); renderList(); },
+                    );
                 }
             });
+            refreshTokenCounts();
         }
         renderList();
 
@@ -822,7 +972,7 @@ export function createPersonaLibrary(container, adapter) {
         wrapperTemplate.value = draft.wrapper?.template ?? '<system>{{PROMPT}}</system>';
 
         if (!canEdit) {
-            for (const inp of [addItemBtn, addGroupBtn, joinerInput, wrapperToggle, wrapperTemplate]) inp.setAttribute('disabled', '');
+            for (const inp of [addItemBtn, addGroupBtn, joinerInput, wrapperToggle, wrapperTemplate, searchInput]) inp.setAttribute('disabled', '');
         }
 
         wrap.append(
@@ -831,8 +981,10 @@ export function createPersonaLibrary(container, adapter) {
                 class: 'pl-sections-hint',
                 text: 'Blocks that only apply for generation \u2014 unlike Additional Sections above, these are never written into the persona\u2019s saved description. Bind an item or group to a specific character or chat, or leave it manual.',
             }),
+            searchInput,
             list,
             el('div', { class: 'pl-sections-add' }, canEdit ? [addItemBtn, addGroupBtn] : []),
+            totalTokensEl,
             el('div', { class: 'pl-variants-settings' }, [
                 el('div', { class: 'pl-field' }, [el('label', { text: 'Joiner between active blocks' }), joinerInput]),
                 el('label', { class: 'pl-variants-wrapper-toggle' }, [wrapperToggle, document.createTextNode(' Wrap the final composed result in a template')]),
@@ -966,12 +1118,25 @@ export function createPersonaLibrary(container, adapter) {
 
         function render() {
             const finalText = (adapter.composeVariants ?? composeVariants)(baseComposed, variants, contextFor(previewMode));
+            const tokenEl = el('span', { class: 'pl-preview-tokens', text: '' });
             infoBar.replaceChildren(
                 el('span', { text: `Injected via: ${positionLabel}` }),
                 el('span', { text: `Depth ${p.depth ?? 2} \u2022 Role: ${roleLabel}` }),
                 el('span', { text: `${finalText.length.toLocaleString()} characters` }),
+                tokenEl,
             );
             output.replaceChildren(document.createTextNode(finalText || '(Nothing yet \u2014 add a core description, an enabled section, or an active variant.)'));
+            // Live cost for exactly what's active right now, as opposed to
+            // the Edit tab's running total (which counts EVERYTHING
+            // configured, active or not) — this number is the real, current
+            // spend for whichever "Preview as" mode is selected above.
+            if (adapter.getTokenCount && finalText.trim()) {
+                const myText = finalText;
+                adapter.getTokenCount(myText).then((count) => {
+                    if (output.textContent !== myText) return; // stale, a newer render already replaced this
+                    tokenEl.textContent = `~${count} tokens (currently active)`;
+                });
+            }
         }
         modeSelect.onchange = () => { previewMode = modeSelect.value; render(); };
         render();
@@ -1140,7 +1305,7 @@ export function createPersonaLibrary(container, adapter) {
             // background click to SillyTavern — not just this button. Now
             // fixed at the source (see the `container.appendChild(detail)`
             // comment above), so this can go back to being a plain click.
-            onclick: () => { selectedId = null; renderGrid(); renderDetail(); },
+            onclick: () => closeDetail(),
         }, [el('i', { class: 'fa-solid fa-grip' }), el('span', { text: 'Back to Grid' })]);
 
         const headerActions = el('div', { class: 'pl-header-actions' }, [
@@ -1167,7 +1332,7 @@ export function createPersonaLibrary(container, adapter) {
                         depth: Number(depthInput.value),
                         role: Number(roleSelect.value),
                     });
-                }, 'Saved.', 'Could not save.'),
+                }, 'Saved \u2713', 'Could not save.'),
             }),
             el('button', {
                 class: 'pl-detail-close', type: 'button', title: 'Close',
@@ -1179,12 +1344,10 @@ export function createPersonaLibrary(container, adapter) {
                 // actually close the tab. That's the real, separate control
                 // for that (title="Persona Management", down in the main
                 // nav) — confirmed against the live DOM, not a guess.
-                onclick: () => {
-                    selectedId = null;
-                    renderGrid();
-                    renderDetail();
-                    document.querySelector('.drawer-icon[title="Persona Management"]')?.click();
-                },
+                // Routed through closeDetail() so an unsaved-changes prompt
+                // still gets a chance to fire first; the native-tab-close
+                // only happens once that's resolved (or wasn't needed).
+                onclick: () => closeDetail(() => document.querySelector('.drawer-icon[title="Persona Management"]')?.click()),
             }, [el('i', { class: 'fa-solid fa-xmark' })]),
         ].filter(Boolean));
 

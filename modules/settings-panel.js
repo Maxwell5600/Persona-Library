@@ -8,6 +8,7 @@
  * behavior choice, not something to bury per-character.
  */
 import { getSettings, saveSettings } from './st-adapter.js';
+import { CHANGELOG } from './changelog.js';
 
 const PANEL_ID = 'persona-library-settings-panel';
 
@@ -65,6 +66,73 @@ export function mountSettingsPanel() {
         saveSettings({ reliableCharacterBindings: checkbox.checked });
     });
 
+    drawer.querySelector('.inline-drawer-content').appendChild(buildChangelogSection(settings));
+
     host.appendChild(drawer);
     return true;
+}
+
+function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/**
+ * "What's New" viewer, right under the setting above — this extension
+ * replaces SillyTavern's own Persona Management panel wholesale, so there's
+ * nowhere else a person would naturally see what changed between installs.
+ * Deliberately plain <details>/<summary> rather than SillyTavern's own
+ * .inline-drawer markup: that relies on ST's own click wiring, which isn't
+ * guaranteed to pick up elements added to the DOM after page load the same
+ * way; <details> works with zero JS and can't silently fail to expand.
+ *
+ * Also tracks whether there's anything unseen (a simple "have you opened
+ * this since a newer version landed" flag in settings) and shows a small
+ * badge on the toggle when so — marked seen the moment it's opened.
+ */
+function buildChangelogSection(settings) {
+    const currentVersion = CHANGELOG[0]?.version ?? '';
+    const hasUnseen = !!currentVersion && settings.lastSeenChangelogVersion !== currentVersion;
+
+    const wrap = document.createElement('div');
+    wrap.id = 'pl-changelog';
+    wrap.style.marginTop = '10px';
+    wrap.style.paddingTop = '8px';
+    wrap.style.borderTop = '1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.15))';
+
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.style.cursor = 'pointer';
+    summary.innerHTML = `<b>What's New / Changelog</b>${hasUnseen ? ' <span style="background:var(--SmartThemeQuoteColor,#5a8); color:#111; border-radius:999px; padding:1px 8px; font-size:0.75em; margin-left:6px;">NEW</span>' : ''}`;
+    details.appendChild(summary);
+
+    const body = document.createElement('div');
+    body.style.marginTop = '8px';
+    body.style.display = 'flex';
+    body.style.flexDirection = 'column';
+    body.style.gap = '14px';
+
+    CHANGELOG.forEach((entry, i) => {
+        const block = document.createElement('div');
+        const listHtml = (title, items) => (items && items.length
+            ? `<b>${escapeHtml(title)}</b><ul style="margin:2px 0 6px 18px; padding:0;">${items.map((it) => `<li style="margin-bottom:3px;">${escapeHtml(it)}</li>`).join('')}</ul>`
+            : '');
+        block.innerHTML = `
+            <div>
+                <b style="font-size:1.05em;">v${escapeHtml(entry.version)}</b>
+                ${i === 0 ? '<small style="opacity:0.6;"> (current)</small>' : ''}
+            </div>
+            ${listHtml('Added', entry.added)}
+            ${listHtml('Fixed', entry.fixed)}
+            ${listHtml('Removed', entry.removed)}
+            ${entry.note ? `<small style="opacity:0.75; display:block;">${escapeHtml(entry.note)}</small>` : ''}
+        `;
+        body.appendChild(block);
+    });
+
+    details.appendChild(body);
+    details.addEventListener('toggle', () => {
+        if (details.open && currentVersion) saveSettings({ lastSeenChangelogVersion: currentVersion });
+    });
+    wrap.appendChild(details);
+    return wrap;
 }

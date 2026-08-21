@@ -36,7 +36,43 @@ export function newItem(title = 'New variant') {
 }
 
 export function newGroup(title = 'New group') {
-    return { kind: 'group', id: uid(), title, children: [], binding: { mode: 'manual', enabled: true } };
+    return { kind: 'group', id: uid(), title, children: [], binding: { mode: 'manual', enabled: true }, collapsed: false };
+}
+
+/**
+ * Deep-clones an item or group as a fresh, independent copy — every node
+ * (the node itself, and every child if it's a group) gets its own new id,
+ * and binding refs are copied by value so editing the clone's bindings can
+ * never mutate the original's. Used for the "duplicate" button so it's a
+ * true starting-point copy, not a shared reference.
+ */
+export function cloneNode(node) {
+    if (!node) return node;
+    if (node.kind === 'group') {
+        return {
+            kind: 'group',
+            id: uid(),
+            title: node.title,
+            children: (node.children ?? []).map(cloneNode),
+            binding: cloneBinding(node.binding),
+            collapsed: !!node.collapsed,
+        };
+    }
+    return {
+        kind: 'item',
+        id: uid(),
+        title: node.title,
+        content: node.content,
+        binding: cloneBinding(node.binding),
+    };
+}
+
+function cloneBinding(b) {
+    if (!b) return { mode: 'manual', enabled: true };
+    if (b.mode === 'character' || b.mode === 'chat') {
+        return { mode: b.mode, refs: (b.refs ?? []).map((r) => ({ ...r })) };
+    }
+    return { ...b };
 }
 
 export function defaultVariants() {
@@ -81,6 +117,12 @@ function normalizeNode(n) {
             title: n.title ?? 'Group',
             children: Array.isArray(n.children) ? n.children.map(normalizeNode).filter((c) => c?.kind === 'item') : [],
             binding: normalizeBinding(n.binding),
+            // Purely a display preference (whether this group shows expanded
+            // or collapsed in the editor) — never read by isNodeActive or
+            // composeVariants, so it has zero effect on generation. Carried
+            // through normalize like any other field so it survives a
+            // save/reload cycle instead of resetting every time.
+            collapsed: !!n.collapsed,
         };
     }
     return {

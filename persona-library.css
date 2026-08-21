@@ -797,6 +797,32 @@
     margin-top: -4px;
 }
 
+.pl-variants-search {
+    padding: 5px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--pl-border);
+    background: var(--pl-surface);
+    color: inherit;
+    font-size: 0.85em;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.pl-token-badge {
+    flex: 0 0 auto;
+    font-size: 0.7em;
+    opacity: 0.55;
+    white-space: nowrap;
+    min-width: 2.5em;
+    text-align: right;
+}
+
+.pl-variants-token-total {
+    font-size: 0.75em;
+    opacity: 0.6;
+    margin-top: -4px;
+}
+
 .pl-sections-list {
     display: flex;
     flex-direction: column;
@@ -932,6 +958,29 @@
     margin-left: 18px;
     padding-left: 10px;
     border-left: 2px solid var(--pl-border);
+}
+
+/* Collapsed groups: just the header row (chevron, folder icon, title,
+   item count, duplicate/remove buttons) — no gap needed with only one child. */
+.pl-variant-group-collapsed {
+    gap: 0;
+    padding: 6px 8px;
+}
+
+.pl-variant-group-collapse-btn {
+    flex: 0 0 auto;
+}
+
+.pl-variant-group-collapse-btn i {
+    transition: transform 0.15s ease;
+}
+
+.pl-variant-group-count {
+    flex: 0 0 auto;
+    font-size: 12px;
+    color: var(--pl-text-dim, var(--pl-text-2, #999));
+    white-space: nowrap;
+    opacity: 0.75;
 }
 
 .pl-binding {

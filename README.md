@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/31247037/README.md)
 # Persona Library
 
 A CharacterLibrary-style gallery for your **personas** in SillyTavern. Replaces
@@ -39,10 +38,15 @@ browse characters, instead of scrolling a cramped avatar strip.
   sections are folded into the final description in the order shown, so this
   isn't just cosmetic
 - **Preview** — shows *exactly* what gets folded into the prompt the AI
-  receives, live, as you edit — core description plus every enabled section,
-  composed exactly the way SillyTavern will inject it
+  receives, live, as you edit — core description plus every enabled section
+  and currently-active variant, composed exactly the way SillyTavern will
+  inject it, plus a live token-count estimate for that exact result
 
 Prev/next arrows let you flip between personas without closing the modal.
+Saving shows a toast confirmation ("Saved ✓") so it's never ambiguous whether
+an edit landed, and closing the detail view (X, Back to Grid, or clicking the
+backdrop) with unsaved changes asks first instead of silently discarding them.
+
 Everything (name, image, description, injection position/depth/role) writes
 through SillyTavern's own persona functions, so it stays fully compatible with
 the native Persona Management panel, other extensions, and your existing
@@ -68,9 +72,24 @@ Each variant can be gated by how it should activate:
 
 Variants can be grouped one level deep — a group has its own binding gating
 the whole group, and each child inside it is still independently evaluated,
-so a child can be off even inside an otherwise-active group. An optional
-wrapper template (with a `{{PROMPT}}` placeholder) and a custom joiner string
-are both available for how the composed result gets assembled.
+so a child can be off even inside an otherwise-active group. Groups are
+collapsible (click the chevron) to keep a long list manageable — the
+collapsed/expanded state itself is saved with the persona, so it doesn't
+reset every time you reopen the editor. An optional wrapper template (with a
+`{{PROMPT}}` placeholder) and a custom joiner string are both available for
+how the composed result gets assembled.
+
+A few conveniences once a persona has a lot of variants:
+- A **duplicate button** on every item and group clones it (fresh IDs on
+  everything, including a group's children) as a starting point instead of
+  retyping
+- A **search box** inside the Variants editor filters the list by title or
+  content (word-boundary matching, not plain substring — searching "Ear"
+  won't match "Beard" or "Year")
+- **Token count estimates**: a small badge on every item plus a running total
+  at the bottom of the editor (everything configured, active or not — the
+  ceiling), using whichever tokenizer is actually configured, with a rough
+  estimate as a fallback
 
 **Character bindings, and the "Reliable character bindings" setting:** by
 default, a variant bound to "this character" is matched by that character's
@@ -118,43 +137,50 @@ the chat's own metadata already, so they're reliable regardless.
 
 Open the **Persona's** tab like normal — the gallery replaces the native panel
 there automatically. Click a persona to open the detail view; click the
-background outside the modal, or the X, to close it.
+background outside the modal, or the X, to close it (either will warn first
+if you have unsaved changes).
 
 Variants are configured per-persona alongside Sections in the Edit tab. The
 "Reliable character bindings" setting lives separately, under
 **Extensions → Persona Library**, since it's an install-wide behavior choice
-rather than something per-persona.
+rather than something per-persona. Right below it is a **What's New /
+Changelog** section showing what changed between versions, with a small
+"NEW" badge when there's something you haven't seen yet.
 
 ## Navigation & passthroughs to native SillyTavern UI
 
 A few small additions aimed at not getting in your way when you need
-something this extension May Not cover itself:
+something this extension may not cover itself:
 
 - **Back to Grid** — a button in the detail view's header (top-left, next to
   the Use/Replace-image/Duplicate/Delete icons) that returns you to the
   persona grid without leaving the tab. This is distinct from the X in the
   same header, which closes the whole panel — Back to Grid is for "I'm done
   with this persona, show me the others," X is for "I'm done with the tab
-  entirely."
+  entirely." Both warn first if you have unsaved changes.
 - **Worlds/Lorebooks** (book icon, top toolbar) — jumps straight to
   SillyTavern's native World Info / Lorebook panel, since managing lorebooks
   isn't something Persona Library reimplements.
+- **Persona Lore** (book-bookmark icon, in a persona's own detail view) —
+  jumps to SillyTavern's native picker for linking/changing which lorebook
+  is attached to *that specific persona*, the same way the button above does
+  for World Info generally.
 - **Open native Persona menu** (button above the gallery, always visible) —
   Persona Library works by hiding SillyTavern's original Persona Management
   UI and mounting its own gallery in the same spot. Some native
-  functionality doesn't have a Persona Library equivalent yet, so this
-  button temporarily reverses that: it hides the gallery and reveals the
-  real, original panel underneath. Click it again (now labeled **Back to
-  Persona Library**) to swap back. Nothing about your data changes either
-  way — it's purely a display toggle.
+  functionality doesn't have a Persona Library equivalent yet (chat-lock, for
+  one — see Notes/limitations below), so this button temporarily reverses
+  that: it hides the gallery and reveals the real, original panel underneath.
+  Click it again (now labeled **Back to Persona Library**) to swap back.
+  Nothing about your data changes either way — it's purely a display toggle.
 
-The Worlds/Lorebooks button works by finding and clicking SillyTavern's own
-native World Info control, so if it doesn't do anything on your particular
-SillyTavern build/fork, the underlying element ID may differ from what's
-expected — please open an issue with what you see (or don't see) in the
-browser console. The native Persona menu toggle doesn't have this issue,
-since it's just flipping a display state Persona Library already controls
-rather than searching for anything.
+The Worlds/Lorebooks and Persona Lore buttons both work by finding and
+clicking SillyTavern's own native controls, so if one doesn't do anything on
+your particular SillyTavern build/fork, the underlying element ID may differ
+from what's expected — please open an issue with what you see (or don't see)
+in the browser console. The native Persona menu toggle doesn't have this
+issue, since it's just flipping a display state Persona Library already
+controls rather than searching for anything.
 
 ## How the description is built
 
@@ -185,8 +211,19 @@ that happen to be active get layered on top of it at that moment.
   included too.
 - Chat-bound variants store their binding id inside that chat's own
   `chat_metadata`, so they travel with the chat itself.
+- Chat-lock (locking a persona to a specific chat) is intentionally **not**
+  surfaced in this extension's own UI — an earlier attempt at that shipped
+  briefly and didn't actually work correctly, so it was pulled rather than
+  left half-functional. Use **Open native Persona menu** for that, or the
+  native `/persona-lock` slash command. See `CHANGELOG.md` for the full story
+  if you're curious.
 - Built and tested against a recent SillyTavern release build. If something
   breaks after a SillyTavern update, please open an issue with what changed.
+
+## Changelog
+
+See [`CHANGELOG.md`](CHANGELOG.md) for the full version history, or open
+**Extensions → Persona Library** in SillyTavern for the same thing in-app.
 
 ## Credits
 
@@ -205,3 +242,4 @@ code line by line. Sharing that plainly rather than leaving it unstated.
 ## License
 
 [Unlicense](LICENSE) — public domain dedication. Use it however you'd like.
+
