@@ -9,6 +9,36 @@ nothing parses one from the other on purpose, so both stay simple and
 independently correct. If you add an entry to one, add the matching one to
 the other.
 
+## v1.6.0
+
+### Added
+- A variant can now be bound to a character **and** a chat at the same
+  time, instead of being locked to only one binding type. The old separate
+  Character / Chat / Match modes are merged into a single "Automatic
+  Bindings" section with both "+ Bind current character" and "+ Bind
+  current chat" buttons together, plus the match-pattern field — bind as
+  many of the three as you want on one item or group.
+- **Important semantics to know:** combining a character binding and a chat
+  binding on the same node is **OR**, not AND — it activates when *either*
+  matches, not only when both do at once (e.g. "chat X" alone, or
+  "character Y" alone, both trigger it; it does not require chat X
+  specifically with character Y). This was a deliberate design decision
+  made when adding this, not an accidental side effect.
+
+Existing variants keep working with no manual re-configuring: old
+character-only, chat-only, match-only, and legacy default-mode data are all
+automatically converted to the new combined binding shape the next time
+they're loaded.
+
+On that note — the migration code contains a switch statement where the old
+`'default'` (always-active) mode intentionally falls through into the
+`'manual'` case with no `break;`, so it becomes `mode: 'manual', enabled:
+true` on load. That *looks* like a classic missing-break bug on a cold read
+(it's exactly the pattern most linters flag), but it isn't — it's the
+intended migration path, confirmed by whoever wrote it. Flagging this here
+so nobody "fixes" it later by adding a break and silently breaks the
+migration instead.
+
 ## v1.5.8
 
 ### Removed
