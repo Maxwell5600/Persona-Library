@@ -383,7 +383,7 @@ export function createPersonaLibrary(container, adapter) {
     );
 
     function persist(patch) {
-        Object.assign(settings, patch);        
+        Object.assign(settings, patch);
         try { adapter.saveSettings?.(patch); } catch (e) { console.warn('[PersonaLibrary] saveSettings failed', e); }
     }
 
@@ -630,30 +630,111 @@ export function createPersonaLibrary(container, adapter) {
         const wrap = el('div', { class: 'pl-binding' });
         const modeSelect = el('select', { class: 'pl-select pl-binding-mode' }, [
             el('option', { value: 'manual', text: 'Manual toggle' }),
-            el('option', { value: 'default', text: 'Always on (default)' }),
-            el('option', { value: 'character', text: 'Bound to character' }),
-            el('option', { value: 'chat', text: 'Bound to chat' }),
-            el('option', { value: 'match', text: 'Match character description' }),
+            el('option', { value: 'bound', text: 'Automatic Bindings' }),
         ]);
-        modeSelect.value = node.binding?.mode ?? 'manual';
+        modeSelect.value = node.mode ?? 'manual';
 
         const body = el('div', { class: 'pl-binding-body' });
 
         function renderBody() {
             body.replaceChildren();
-            const mode = node.binding.mode;
+            const mode = node.mode ?? 'manual';
 
             if (mode === 'manual') {
                 const chk = el('input', {
                     type: 'checkbox',
-                    oninput: () => { markDirty(); node.binding.enabled = chk.checked; },
+                    oninput: () => { markDirty(); node.enabled = chk.checked; },
                 });
-                chk.checked = node.binding.enabled !== false;
+                chk.checked = node.enabled !== false;
                 if (!canEdit) chk.setAttribute('disabled', '');
                 body.append(el('label', { class: 'pl-binding-manual' }, [chk, document.createTextNode(' Enabled')]));
                 return;
             }
 
+            if (mode === 'bound'){
+
+                node.binding.character.refs = node.binding?.character?.refs ?? [];
+                node.binding.chat.refs = node.binding?.chat?.refs ?? [];
+                node.binding.match.pattern = node.binding?.match?.pattern ?? '';
+
+                const refsList = el('div', { class: 'pl-binding-refs' });
+
+                const renderRefs = () => {
+                    const allRefs = [...new Map([...node.binding?.character?.refs, ...node.binding.chat.refs].map(r => [r.uuid, r])).values()];
+                    refsList.replaceChildren(...allRefs.map((r, i) => el('span', {class:'pl-binding-ref'}, [
+                        el('span', { class: 'pl-binding-ref-label', text: r.label || '(unnamed)' }),
+                        el('button', {
+                            class: 'pl-binding-ref-remove', type: 'button', title: 'Unbind',
+                            onclick: () => {
+                                markDirty();
+                                const uuid = r.uuid;
+                                const charIdx = node.binding.character.refs.findIndex(x => x.uuid === uuid);
+                                if (charIdx !== -1) node.binding.character.refs.splice(charIdx, 1);
+                                const chatIdx = node.binding.chat.refs.findIndex(x => x.uuid === uuid);
+                                if (chatIdx !== -1) node.binding.chat.refs.splice(chatIdx, 1);
+                                renderRefs();
+                            },
+                        }, [el('i', { class: 'fa-solid fa-xmark' })]),
+                    ])))
+                }
+                renderRefs()
+
+                const charBindBtn = el('button', {
+                    class: 'pl-btn', type: 'button',
+                    text: '+ Bind current character',
+                    title: 'Activate whenever the current character is the one currently loaded.',
+                    onclick: async () => {
+                        try {
+                                const info = adapter.getCurrentCharacterInfo?.();
+                                if (!info) { globalThis.toastr?.warning?.('No character is currently open.', 'Persona Library'); return; }
+                                const uuid = await adapter.ensureCharacterBindingId?.();
+                                const key = uuid ?? `avatar:${info.avatar}`;
+                                if (!node.binding.character.refs.some((r) => r.uuid === key)) {
+                                    markDirty();
+                                    node.binding.character.refs.push({ uuid: key, label: info.name });
+                                }
+                        } catch (e) {
+                            console.error('[PersonaLibrary]', e);
+                            globalThis.toastr?.error?.('Could not bind.', 'Persona Library');
+                        }
+                        renderRefs();
+                    },
+                });
+                if (!canEdit)  { charBindBtn.setAttribute('disabled', '');}
+
+                const chatBindBtn = el('button', {
+                    class: 'pl-btn', type: 'button',
+                    text: '+ Bind current chat',
+                    title: 'Activate whenever the current chat is the one currently loaded.',
+                    onclick: async () => {
+                        try {
+                            const uuid = await adapter.ensureChatBindingId?.();
+                            if (!uuid) { globalThis.toastr?.warning?.('No chat is currently open.', 'Persona Library'); return; }
+                            const label = adapter.getCurrentChatLabel?.() ?? 'Current chat';
+                            if (!node.binding.chat.refs.some((r) => r.uuid === uuid)) {
+                                markDirty();
+                                node.binding.chat.refs.push({ uuid, label });
+                            }
+                        } catch (e) {
+                            console.error('[PersonaLibrary]', e);
+                            globalThis.toastr?.error?.('Could not bind.', 'Persona Library');
+                        }
+                        renderRefs();
+                    },
+                });
+                if (!canEdit)  { chatBindBtn.setAttribute('disabled', '');}
+                const matchInput = el('input', {
+                    type: 'text', class: 'pl-binding-match', placeholder: 'text or /regex/flags…',
+                    value: node.binding.match.pattern ?? '',
+                    oninput: () => { markDirty(); node.binding.match.pattern = matchInput.value; },
+                });
+                if (!canEdit) matchInput.setAttribute('disabled', '');
+
+                body.append(refsList, canEdit ? charBindBtn : null, canEdit ? chatBindBtn : null, matchInput, el('div', { class: 'pl-sections-hint', text: 'Activate when text in card description matches this pattern.' }));
+            }
+            return;
+
+            /*----- OLD CODE
             if (mode === 'character' || mode === 'chat') {
                 node.binding.refs = node.binding.refs ?? [];
                 const refsList = el('div', { class: 'pl-binding-refs' });
@@ -704,7 +785,9 @@ export function createPersonaLibrary(container, adapter) {
                 body.append(refsList, canEdit ? addBtn : null, el('div', { class: 'pl-sections-hint', text: hint }));
                 return;
             }
+            */
 
+            /* [TODO] How would this even work
             if (mode === 'match') {
                 const patternInput = el('input', {
                     type: 'text', class: 'pl-binding-match', placeholder: 'text or /regex/flags\u2026',
@@ -715,14 +798,16 @@ export function createPersonaLibrary(container, adapter) {
                 body.append(patternInput, el('div', { class: 'pl-sections-hint', text: 'Matches against the current character\u2019s Description field \u2014 plain text (contains) or /regex/flags.' }));
                 return;
             }
+             */
 
             // 'default' — nothing to configure, always active.
-            body.append(el('div', { class: 'pl-sections-hint', text: 'Always included, regardless of character or chat.' }));
+            //body.append(el('div', { class: 'pl-sections-hint', text: 'Always included, regardless of character or chat.' }));
         }
 
         modeSelect.onchange = () => {
             markDirty();
-            const mode = modeSelect.value;
+            node.mode = modeSelect.value;
+            /*
             node.binding = mode === 'character' || mode === 'chat'
                 ? { mode, refs: [] }
                 : mode === 'match'
@@ -730,6 +815,8 @@ export function createPersonaLibrary(container, adapter) {
                     : mode === 'default'
                         ? { mode }
                         : { mode: 'manual', enabled: true };
+
+            */
             renderBody();
         };
         if (!canEdit) modeSelect.setAttribute('disabled', '');
@@ -1164,7 +1251,7 @@ export function createPersonaLibrary(container, adapter) {
             if (!n) return;
             if (n.kind === 'group') {
                 for (const c of n.children ?? []) collectManual(c);
-            } else if ((n.binding?.mode ?? 'manual') === 'manual' || n.binding?.mode === 'default') {
+            } else if ((n.mode ?? 'manual') === 'manual') {
                 manualNodes.push(n);
             }
         };
@@ -1176,12 +1263,12 @@ export function createPersonaLibrary(container, adapter) {
                     el('span', { text: n.title || (n.kind === 'group' ? 'Group' : 'Variant') }),
                     el('span', {
                         class: 'pl-preview-target-status',
-                        text: n.binding?.mode === 'default' ? 'Always on' : (n.binding?.enabled !== false ? 'Manual: On' : 'Manual: Off'),
+                        text: (!!n.enabled ? 'Manual: On' : 'Manual: Off'),
                     }),
                 ])),
             );
             wrap.append(
-                el('h4', { text: 'Manual & Default variants' }),
+                el('h4', { text: 'Manual variants' }),
                 el('div', { class: 'pl-sections-hint', text: 'These apply regardless of which chat or character is active \u2014 already reflected in every preview above, listed here for a quick at-a-glance check.' }),
                 manualList,
             );
