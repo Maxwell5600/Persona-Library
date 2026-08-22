@@ -682,6 +682,7 @@ export function createPersonaLibrary(container, adapter) {
                 const charBindBtn = el('button', {
                     class: 'pl-btn', type: 'button',
                     text: '+ Bind current character',
+                    title: 'Activate whenever the current character is the one currently loaded.',
                     onclick: async () => {
                         try {
                                 const info = adapter.getCurrentCharacterInfo?.();
@@ -704,6 +705,7 @@ export function createPersonaLibrary(container, adapter) {
                 const chatBindBtn = el('button', {
                     class: 'pl-btn', type: 'button',
                     text: '+ Bind current chat',
+                    title: 'Activate whenever the current chat is the one currently loaded.',
                     onclick: async () => {
                         try {
                             const uuid = await adapter.ensureChatBindingId?.();
@@ -728,7 +730,7 @@ export function createPersonaLibrary(container, adapter) {
                 });
                 if (!canEdit) matchInput.setAttribute('disabled', '');
 
-                body.append(refsList, canEdit ? charBindBtn : null, canEdit ? chatBindBtn : null, matchInput, el('div', { class: 'pl-sections-hint', text: 'Active whenever any of these characters is the one currently loaded.' }));
+                body.append(refsList, canEdit ? charBindBtn : null, canEdit ? chatBindBtn : null, matchInput, el('div', { class: 'pl-sections-hint', text: 'Activate when text in card description matches this pattern.' }));
             }
             return;
 
@@ -804,7 +806,7 @@ export function createPersonaLibrary(container, adapter) {
 
         modeSelect.onchange = () => {
             markDirty();
-            node.mode = modeSelect.value;             
+            node.mode = modeSelect.value;
             /*
             node.binding = mode === 'character' || mode === 'chat'
                 ? { mode, refs: [] }
@@ -1249,7 +1251,7 @@ export function createPersonaLibrary(container, adapter) {
             if (!n) return;
             if (n.kind === 'group') {
                 for (const c of n.children ?? []) collectManual(c);
-            } else if ((n.binding?.mode ?? 'manual') === 'manual') {
+            } else if ((n.mode ?? 'manual') === 'manual') {
                 manualNodes.push(n);
             }
         };
@@ -1261,7 +1263,7 @@ export function createPersonaLibrary(container, adapter) {
                     el('span', { text: n.title || (n.kind === 'group' ? 'Group' : 'Variant') }),
                     el('span', {
                         class: 'pl-preview-target-status',
-                        text: (!!n.binding?.enabled ? 'Manual: On' : 'Manual: Off'),
+                        text: (!!n.enabled ? 'Manual: On' : 'Manual: Off'),
                     }),
                 ])),
             );
