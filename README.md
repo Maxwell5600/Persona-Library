@@ -5,17 +5,20 @@ the native Persona Management panel with a full-bleed image grid and a proper
 detail view — browse, create, edit, and organize your personas the way you'd
 browse characters, instead of scrolling a cramped avatar strip.
 
-<img width="1918" height="916" alt="Screenshot 2026-08-18 211532" src="https://github.com/user-attachments/assets/6c120003-c135-4a70-a6c4-bfa5bfdc4e36" />
-<img width="1918" height="917" alt="Screenshot 2026-08-18 211617" src="https://github.com/user-attachments/assets/19363996-13e0-40f0-aed4-825c7939b416" />
-<img width="1912" height="917" alt="Screenshot 2026-08-17 211504" src="https://github.com/user-attachments/assets/2afbe466-d84b-4461-bd6c-627d15fc44c2" />
-<img width="1918" height="916" alt="Screenshot 2026-08-17 211517" src="https://github.com/user-attachments/assets/5676cd50-f2c3-48f2-9bb8-bd6860e73381" />
-<img width="1917" height="917" alt="Screenshot 2026-08-17 211527" src="https://github.com/user-attachments/assets/e41f90d2-fbf8-482a-93ce-549a770c575c" />
-<img width="1918" height="922" alt="Screenshot 2026-08-17 220147" src="https://github.com/user-attachments/assets/944c8195-c3b3-49c7-8f0a-a9718fbe52b8" />
-<img width="1912" height="925" alt="Screenshot 2026-08-17 215742" src="https://github.com/user-attachments/assets/a3d08c68-bf95-4c6e-ba2b-29434c6d8f12" />
-<img width="1918" height="921" alt="Screenshot 2026-08-18 210830" src="https://github.com/user-attachments/assets/16c3671c-9c85-4b02-b1a9-1f82a3091592" />
-<img width="1918" height="918" alt="Screenshot 2026-08-18 210911" src="https://github.com/user-attachments/assets/f96fb2ed-cc2c-4807-b9d9-00a73d2bad88" />
-<img width="1918" height="922" alt="Screenshot 2026-08-18 210818" src="https://github.com/user-attachments/assets/31cb18da-1d1d-415c-8e6f-88ae8191c535" />
-<img width="1918" height="910" alt="Screenshot 2026-08-18 211257" src="https://github.com/user-attachments/assets/5b2cdf4c-6407-4879-b73a-e0d910de4b3c" />
+<img width="1918" height="922" alt="Screenshot 2026-08-22 201148" src="https://github.com/user-attachments/assets/aacff3a7-b491-4adc-9f78-ba836db0194e" />
+<img width="1918" height="917" alt="Screenshot 2026-08-22 201201" src="https://github.com/user-attachments/assets/9d2669f2-85a0-4341-9a1e-bca52571150f" />
+<img width="1918" height="915" alt="Screenshot 2026-08-22 213531" src="https://github.com/user-attachments/assets/cbf027df-37fa-4723-94f8-1bc949eaef77" />
+<img width="1918" height="912" alt="Screenshot 2026-08-22 213729" src="https://github.com/user-attachments/assets/0bec657b-bc79-4a24-ae45-dce488591831" />
+<img width="1918" height="915" alt="Screenshot 2026-08-22 213550" src="https://github.com/user-attachments/assets/584f379c-39fa-4367-bfa5-de9627ecca9f" />
+<img width="1918" height="916" alt="Screenshot 2026-08-22 214300" src="https://github.com/user-attachments/assets/6c9ef99b-45c0-4855-981b-989c22382618" />
+<img width="1915" height="922" alt="Screenshot 2026-08-22 213500" src="https://github.com/user-attachments/assets/30ddce2b-c087-4ce9-9606-cc4b018077be" />
+
+
+<img width="1918" height="917" alt="Screenshot 2026-08-22 213627" src="https://github.com/user-attachments/assets/bd9eaa5b-e3c2-4f47-8494-5891462864c4" />
+<img width="1918" height="917" alt="Screenshot 2026-08-22 213648" src="https://github.com/user-attachments/assets/5916ee31-b39b-4f2a-b62a-5d89e4c88aa3" />
+<img width="1918" height="923" alt="Screenshot 2026-08-22 213643" src="https://github.com/user-attachments/assets/32f3202b-bf75-4a55-bc72-c245b170cfed" />
+<img width="1918" height="917" alt="Screenshot 2026-08-22 213656" src="https://github.com/user-attachments/assets/391ae189-2e09-49f8-a231-362f6dac7154" />
+
 
 ## Features
 
