@@ -12,6 +12,8 @@ browse characters, instead of scrolling a cramped avatar strip.
 <img width="1918" height="915" alt="Screenshot 2026-08-22 213550" src="https://github.com/user-attachments/assets/584f379c-39fa-4367-bfa5-de9627ecca9f" />
 <img width="1918" height="916" alt="Screenshot 2026-08-22 214300" src="https://github.com/user-attachments/assets/6c9ef99b-45c0-4855-981b-989c22382618" />
 <img width="1915" height="922" alt="Screenshot 2026-08-22 213500" src="https://github.com/user-attachments/assets/30ddce2b-c087-4ce9-9606-cc4b018077be" />
+<img width="1918" height="915" alt="Screenshot 2026-08-22 230202" src="https://github.com/user-attachments/assets/17636ca7-cad2-4faa-a2c0-da39d38d8eba" />
+<img width="1918" height="922" alt="Screenshot 2026-08-22 230142" src="https://github.com/user-attachments/assets/3381f25b-4443-46b5-806a-663ea51375b2" />
 
 
 <img width="1918" height="917" alt="Screenshot 2026-08-22 213627" src="https://github.com/user-attachments/assets/bd9eaa5b-e3c2-4f47-8494-5891462864c4" />
