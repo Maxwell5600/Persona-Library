@@ -74,16 +74,10 @@ export function cloneNode(node) {
 }
 
 function cloneBinding(b) {
-    //if (!b) return { mode: 'manual', enabled: true };
     if (!b){ //bad binding, return a clean empty one
         return {chat: { refs:[] },character:{ refs:[] },match:{pattern: ''}};
     }
-    //if (b.mode === 'character' || b.mode === 'chat') {
-    //    return { mode: b.mode, refs: (b.refs ?? []).map((r) => ({ ...r })) };
-    //}
     return  {chat: structuredClone(b.chat) ?? {refs:[]}, character: structuredClone(b.character) ?? {refs:[]}, match: structuredClone(b.match) ?? {pattern: ''}}
-
-    //return { ...b };
 }
 
 export function defaultVariants() {
@@ -211,39 +205,6 @@ export function isNodeActive(node, ctx = {}) {
         (!!ctx.chatBindingId && (b.chat?.refs ?? []).some((r) => r.uuid === ctx.chatBindingId))
     ));
 }
-    /*
-    switch (b.mode) {
-
-    case 'default':
-        return true;
-    case 'character':
-        return !!ctx.characterBindingId && (b.refs ?? []).some((r) => r.uuid === ctx.characterBindingId);
-    case 'chat':
-        return !!ctx.chatBindingId && (b.refs ?? []).some((r) => r.uuid === ctx.chatBindingId);
-    case 'match': {
-        const pattern = (b.pattern ?? '').trim();
-        const desc = ctx.characterDescription ?? '';
-        if (!pattern || !desc) return false;
-        const m = /^\/(.*)\/([a-z]*)$/i.exec(pattern);
-        try {
-            if (m) return new RegExp(m[1], m[2]).test(desc);
-            return desc.toLowerCase().includes(pattern.toLowerCase());
-        } catch {
-            return false; // malformed regex — fail closed, never throw into a render/generation path
-        }
-    }
-
-
-
-
-
-    case 'manual':
-    default:
-        return b.enabled !== false;
-}
-}
-
-     */
 
 /**
  * Every distinct chat/character binding target referenced anywhere in

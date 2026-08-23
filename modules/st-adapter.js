@@ -255,9 +255,16 @@ export async function ensureChatBindingId() {
 
 /** Best-effort human-readable label for the current chat, display only — never used for matching. */
 export function getCurrentChatLabel() {
+    function stripExt(filename) {
+        if (typeof filename !== "string" || filename.length === 0) { return null; }
+        const i = filename.lastIndexOf(".");
+        return i >= 0 ? filename.slice(0, i) : filename;
+    }
+
     const c = ctx();
-    const charName = c?.characters?.[c?.characterId]?.name;
-    return charName ? `Current chat with ${charName}` : 'Current chat';
+    const charName = stripExt(c?.characters?.[c?.characterId]?.avatar) || "Unknown Avatar";
+    const chatId = c?.getCurrentChatId();
+    return chatId ? "Chat: " + chatId : `Unnamed chat with ${charName}`;
 }
 
 function activeVariantContext() {
