@@ -32,7 +32,6 @@
  */
 
 import { newItem, newGroup, cloneNode, normalizeVariants, composeVariants, collectBindingRefs } from './variants.js';
-import { ctx } from './st-adapter.js';
 
 const POSITIONS = [
     ['', 'Default (In Prompt)'],
@@ -408,6 +407,7 @@ export function createPersonaLibrary(container, adapter) {
     function renderGrid() {
         const list = visiblePersonas();
         const activeId = adapter.getActiveId?.() ?? null;
+        const scrollTop = gridWrap.scrollTop;
         grid.replaceChildren();
         count.textContent = `${list.length} persona${list.length === 1 ? '' : 's'}`;
 
@@ -433,6 +433,7 @@ export function createPersonaLibrary(container, adapter) {
             ]);
             grid.append(tile);
         }
+        gridWrap.scrollTop = scrollTop;
     }
 
     function select(id) {
@@ -1452,7 +1453,17 @@ export function createPersonaLibrary(container, adapter) {
         detail.replaceChildren(modal);
     }
 
+    let lastFingerprint = null;
     function refresh() {
+         function fingerprint() {
+            return JSON.stringify({
+                activeId: adapter.getActiveId?.() ?? null,
+                personas: adapter.getPersonas?.() ?? [],
+            });
+        }
+        const fp = fingerprint();
+        if (fp === lastFingerprint) { return; } // nothing the gallery cares about changed
+        lastFingerprint = fp;
         const ids = new Set((adapter.getPersonas() ?? []).map((p) => p.id));
         if (selectedId && !ids.has(selectedId)) selectedId = null;
         renderGrid();
