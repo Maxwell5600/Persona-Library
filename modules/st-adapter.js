@@ -10,7 +10,7 @@
 // through the context wrapper, so we import them directly instead of
 // guessing at DOM selectors or context properties that don't exist.
 import { setUserAvatar as stSetUserAvatar, user_avatar as activeUserAvatar, default_user_avatar, setUserName } from '../../../../../script.js';
-import { initPersona } from '../../../../personas.js';
+import { initPersona, setPersonaDescription as stSetPersonaDescription } from '../../../../personas.js';
 import { composeVariants, normalizeVariants, defaultVariants } from './variants.js';
 
 const SETTINGS_KEY = 'personaLibrary';
@@ -36,6 +36,37 @@ function notifyPersonaUpdated(id) {
         c?.eventSource?.emit?.(c?.event_types?.PERSONA_UPDATED, id);
     } catch (e) {
         console.warn('[PersonaLibrary] could not emit PERSONA_UPDATED', e);
+    }
+}
+
+/**
+ * Refreshes SillyTavern's OWN native persona UI (the #persona_description
+ * textarea, its token count, the depth/role dropdowns, the lorebook-link
+ * indicator) to match whatever was just written to power_user.
+ *
+ * Every previous call site in this file tried to do this via
+ * `ctx()?.setPersonaDescription`, which — confirmed directly against
+ * SillyTavern's own st-context.js source — has NEVER actually existed:
+ * setPersonaDescription is exported from personas.js but never re-exported
+ * through the public getContext() object. That means every one of those
+ * calls has been a silent no-op since this code was first written, in
+ * every version, including the ones that already correctly fixed the
+ * underlying DATA (the 1.6.1 persona_description-singular-field fix,
+ * confirmed correct via a raw backend payload capture — generation reads
+ * that field directly, a separate path from this). The data was right;
+ * the visible native panel just never got told to re-read it, so it sat
+ * stale until a persona switch happened to trigger ST's OWN internal call
+ * to the real function.
+ *
+ * Fixed by importing the real, actually-exported function directly from
+ * personas.js (see the top of this file) instead of going through the
+ * broken proxy.
+ */
+function refreshNativePersonaUI() {
+    try {
+        stSetPersonaDescription();
+    } catch (e) {
+        console.warn('[PersonaLibrary] setPersonaDescription() (direct import) failed', e);
     }
 }
 
@@ -131,8 +162,18 @@ export async function savePersonaSections(id, { core, sections }) {
     const d = pu.persona_descriptions[id] ?? { position: 0, depth: 2, role: 0, lorebook: '' };
     d.description = composeDescription(core, sections);
     pu.persona_descriptions[id] = d;
-    if (getActiveId() === id && typeof ctx()?.setPersonaDescription === 'function') {
-        try { ctx().setPersonaDescription(); } catch { /* ignore */ }
+    if (getActiveId() === id) {
+        // The field ST's own prompt builder and the native #persona_description
+        // textarea actually read from — persona_descriptions[id].description
+        // (above) is just the storage entry. Writing only that left this
+        // persona's description invisible to both the native panel and the
+        // next generation until a persona switch happened to copy it over
+        // (SillyTavern's own selectCurrentPersona() does that on switch,
+        // which is why it "fixed itself" that way). Same class of bug as the
+        // one already fixed for the Variants patch path below — that fix
+        // just never got carried over to this, separate, save path.
+        pu.persona_description = d.description;
+        refreshNativePersonaUI();
     }
     ctx()?.saveSettingsDebounced?.();
     notifyPersonaUpdated(id);
@@ -351,9 +392,7 @@ function restorePatch(reason) {
         if (patchState.restoreTimer) { clearTimeout(patchState.restoreTimer); }
         patchState = { active: false, id: null, original: null, originalSingular: null, restoreTimer: null, appliedAt: 0 };
         console.log(`[PersonaLibrary] END EVENT RECEIVED (${reason}) — restored persona description for`, id);
-        if (getActiveId() === id && typeof ctx()?.setPersonaDescription === 'function') {
-            try { ctx().setPersonaDescription(); } catch (e) { console.warn('[PersonaLibrary] setPersonaDescription() failed during restore', e); }
-        }
+        if (getActiveId() === id) refreshNativePersonaUI();
     } catch (e) {
         console.warn('[PersonaLibrary] could not restore persona description; will retry', e);
         // Do NOT clear patchState here — keep the swap tracked so the next
@@ -417,9 +456,7 @@ function applyVariantPatch(reason) {
         patchState = { active: true, id, original: baseline, originalSingular, restoreTimer: null, appliedAt: Date.now() };
         d.description = composed;
         pu.persona_description = composed; // ← the field ST actually reads at generation time
-        if (getActiveId() === id && typeof ctx()?.setPersonaDescription === 'function') {
-            try { ctx().setPersonaDescription(); } catch { /* ignore */ }
-        }
+        if (getActiveId() === id) refreshNativePersonaUI();
         console.log(`[PersonaLibrary] (#${callId}) patch APPLIED for`, id, '(both persona_descriptions[id].description and persona_description)');
 
         // Safety net, same idea as PME: force-restore even if end events
@@ -671,8 +708,15 @@ export async function updatePersona(id, patch) {
     if (patch.depth !== undefined && !Number.isNaN(patch.depth)) d.depth = patch.depth;
     if (patch.role !== undefined && !Number.isNaN(patch.role)) d.role = patch.role;
     pu.persona_descriptions[id] = d;
-    if (getActiveId() === id && typeof c?.setPersonaDescription === 'function') {
-        try { c.setPersonaDescription(); } catch { /* ignore */ }
+    if (getActiveId() === id) {
+        // Same fix as savePersonaSections() above, same reason: this is a
+        // second, separate call site that can write a persona's description
+        // (position/depth/role edits in the Edit tab go through here too),
+        // and it had the identical gap — writing the storage entry but never
+        // the singular field ST's prompt builder and native textarea
+        // actually read from.
+        if (patch.description !== undefined) pu.persona_description = d.description;
+        refreshNativePersonaUI();
     }
     // The chat display name (message headers, the input box's name tag,
     // already-rendered messages) is driven by a separate global, `name1`,

@@ -16,6 +16,18 @@
  */
 export const CHANGELOG = [
     {
+        version: '1.6.2',
+        fixed: [
+            'The real root cause of the "saved changes don\u2019t show up until you switch personas and back" bug \u2014 the 1.6.1 fix addressed a genuine, confirmed part of this (the persona_description singular field never being written), but a saved edit still didn\u2019t appear in the native #persona_description textarea or the live prompt without a persona switch. Turns out `ctx()?.setPersonaDescription` \u2014 called after every write, meant to refresh the native panel \u2014 has NEVER actually existed: confirmed directly against SillyTavern\u2019s own st-context.js source, setPersonaDescription is exported from personas.js but never re-exported through the public getContext() object this extension was calling it through. Every one of those calls, in every version, including the ones that already fixed the underlying data, was a silent no-op. The data was correct after 1.6.1 (which is why the AI backend eventually received the right text once a generation happened to run past the native panel\u2019s stale display) \u2014 the visible native panel itself just never got told to re-read it, so it sat stale until a persona switch triggered SillyTavern\u2019s own internal call to the real function. Fixed by importing the real, actually-exported setPersonaDescription directly from personas.js instead of going through the broken proxy \u2014 the same pattern already used elsewhere in this file for initPersona. This should be the actual, complete fix for the reported behavior, not just a partial one.',
+        ],
+    },
+    {
+        version: '1.6.1',
+        fixed: [
+            'A saved edit to a persona\u2019s description (via the Edit tab\u2019s Sections, or a rename/position/depth/role change) not showing up in SillyTavern\u2019s own native description textarea, and not reaching the actual prompt on the next generation \u2014 until switching to a different persona and back. Root cause: SillyTavern reads the description from TWO places \u2014 `persona_descriptions[id].description` (the per-persona storage entry this extension was correctly writing) and `persona_description` (a separate, singular \u201cactive\u201d field that both the native textarea and the prompt builder actually read from, which was never being written by the Sections/rename save path). Switching personas "fixed" it because SillyTavern\u2019s own persona-switch logic happens to copy the storage entry into that singular field \u2014 masking the bug rather than avoiding it. This is the exact same class of bug already fixed for the Variants generation-time patch a few versions back (see 1.5.6\u2019s note on this); that fix just never got carried over to the separate Sections/updatePersona save path. Both are now kept in sync on every write, consistently, everywhere a description gets saved.',
+        ],
+    },
+    {
         version: '1.6.0',
         added: [
             'A variant can now be bound to a character AND a chat at the same time, instead of being locked to only one binding type. The old separate Character / Chat / Match modes are merged into a single "Automatic Bindings" section with both "+ Bind current character" and "+ Bind current chat" buttons together, plus the match-pattern field \u2014 bind as many of the three as you want on one item or group.',

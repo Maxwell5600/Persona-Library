@@ -9,6 +9,53 @@ nothing parses one from the other on purpose, so both stay simple and
 independently correct. If you add an entry to one, add the matching one to
 the other.
 
+## v1.6.2
+
+### Fixed
+- The real root cause of the "saved changes don't show up until you switch
+  personas and back" bug — the 1.6.1 fix addressed a genuine, confirmed
+  part of this (the `persona_description` singular field never being
+  written), but a saved edit still didn't appear in the native
+  `#persona_description` textarea or the live prompt without a persona
+  switch. Turns out `ctx()?.setPersonaDescription` — called after every
+  write, meant to refresh the native panel — has **never actually
+  existed**: confirmed directly against SillyTavern's own `st-context.js`
+  source, `setPersonaDescription` is exported from `personas.js` but never
+  re-exported through the public `getContext()` object this extension was
+  calling it through. Every one of those calls, in every version,
+  including the ones that already fixed the underlying data, was a silent
+  no-op. The data was correct after 1.6.1 (which is why the AI backend
+  eventually received the right text once a generation happened to run
+  past the native panel's stale display) — the visible native panel itself
+  just never got told to re-read it, so it sat stale until a persona
+  switch triggered SillyTavern's own internal call to the real function.
+  Fixed by importing the real, actually-exported `setPersonaDescription`
+  directly from `personas.js` instead of going through the broken proxy —
+  the same pattern already used elsewhere in this file for `initPersona`.
+  This should be the actual, complete fix for the reported behavior, not
+  just a partial one.
+
+## v1.6.1
+
+### Fixed
+- A saved edit to a persona's description (via the Edit tab's Sections, or
+  a rename/position/depth/role change) not showing up in SillyTavern's own
+  native description textarea, and not reaching the actual prompt on the
+  next generation — until switching to a different persona and back. Root
+  cause: SillyTavern reads the description from **two** places —
+  `persona_descriptions[id].description` (the per-persona storage entry
+  this extension was correctly writing) and `persona_description` (a
+  separate, singular "active" field that both the native textarea and the
+  prompt builder actually read from, which was never being written by the
+  Sections/rename save path). Switching personas "fixed" it because
+  SillyTavern's own persona-switch logic happens to copy the storage entry
+  into that singular field — masking the bug rather than avoiding it. This
+  is the exact same class of bug already fixed for the Variants
+  generation-time patch a few versions back (see 1.5.6's note on this);
+  that fix just never got carried over to the separate Sections/
+  `updatePersona` save path. Both are now kept in sync on every write,
+  consistently, everywhere a description gets saved.
+
 ## v1.6.0
 
 ### Added
