@@ -10,7 +10,13 @@
 // through the context wrapper, so we import them directly instead of
 // guessing at DOM selectors or context properties that don't exist.
 import { setUserAvatar as stSetUserAvatar, user_avatar as activeUserAvatar, default_user_avatar, setUserName } from '../../../../../script.js';
-import { initPersona, setPersonaDescription as stSetPersonaDescription } from '../../../../personas.js';
+import {
+    initPersona,
+    setPersonaDescription as stSetPersonaDescription,
+    isPersonaLocked as stIsPersonaLocked,
+    setPersonaLockState as stSetPersonaLockState,
+    getUserAvatars as stGetUserAvatars,
+} from '../../../../personas.js';
 import { composeVariants, normalizeVariants, defaultVariants } from './variants.js';
 
 const SETTINGS_KEY = 'personaLibrary';
@@ -67,6 +73,50 @@ function refreshNativePersonaUI() {
         stSetPersonaDescription();
     } catch (e) {
         console.warn('[PersonaLibrary] setPersonaDescription() (direct import) failed', e);
+    }
+}
+
+/**
+ * Rebuilds SillyTavern's OWN native persona LIST — the `#user_avatar_block`
+ * rows in the Persona Management panel, in BOTH list and grid view — to
+ * match whatever was just written to power_user.
+ *
+ * This is a genuinely separate gap from refreshNativePersonaUI() above, not
+ * a duplicate of it: that one refreshes the single currently-SELECTED
+ * persona's own detail panel (the #persona_description textarea, its token
+ * count, etc) via setPersonaDescription(). This one rebuilds every row's own
+ * card — including each row's own inline description preview, since
+ * confirmed directly against personas.js's getUserAvatarBlock(), that text
+ * is read fresh from power_user.persona_descriptions[avatarId]?.description
+ * every time THIS function runs, not on any other trigger. A brand-new
+ * persona created here, or an existing one's name/description edited here,
+ * updated power_user correctly either way — but nothing ever told the native
+ * list to re-read it, so it just sat stale (missing entirely for a new
+ * persona, or showing old text for an edited one) until a full page reload
+ * happened to call this on its own via ST's own startup sequence.
+ *
+ * Confirmed this is exactly what native's OWN mutating flows do themselves:
+ * uploadUserAvatar() (the tail end of both native's own "Create" persona
+ * button and its avatar-replace flow) ends with this exact call, and
+ * convertCharacterToPersona() calls it explicitly too. This mirrors that
+ * rather than inventing a new refresh mechanism.
+ *
+ * @param {string} [openPageAt] Optional persona id to jump the native list's
+ *   pagination to, so a newly created/duplicated persona is immediately
+ *   visible without the user having to page over to find it themselves —
+ *   same optional parameter native's own calls use it for.
+ */
+function refreshNativePersonaList(openPageAt = '') {
+    try {
+        // Async, but deliberately not awaited by any caller here — every
+        // call site below already does its own saveSettingsDebounced() and
+        // notifyPersonaUpdated() synchronously, so this can run in the
+        // background without delaying this function's own return the same
+        // way none of the other native refresh calls in this file block on
+        // it either.
+        stGetUserAvatars(true, openPageAt);
+    } catch (e) {
+        console.warn('[PersonaLibrary] getUserAvatars() (native list refresh) failed', e);
     }
 }
 
@@ -177,6 +227,7 @@ export async function savePersonaSections(id, { core, sections }) {
     }
     ctx()?.saveSettingsDebounced?.();
     notifyPersonaUpdated(id);
+    refreshNativePersonaList(id);
 }
 
 /*
@@ -740,6 +791,7 @@ export async function updatePersona(id, patch) {
         } catch (e) { console.warn('[PersonaLibrary] could not emit PERSONA_RENAMED', e); }
     }
     notifyPersonaUpdated(id);
+    refreshNativePersonaList(id);
 }
 
 export async function replaceAvatar(id, file) {
@@ -757,6 +809,7 @@ export async function replaceAvatar(id, file) {
     // right after this — will now include a fresh token automatically.
     avatarCacheBust[id] = Date.now();
     notifyPersonaUpdated(id);
+    refreshNativePersonaList(id);
 }
 
 export async function duplicatePersona(id) {
@@ -779,6 +832,7 @@ export async function duplicatePersona(id) {
     pu.persona_descriptions[savedName] = { ...(pu.persona_descriptions[id] ?? {}), date_added: Date.now() };
     ctx()?.saveSettingsDebounced?.();
     notifyPersonaUpdated(savedName);
+    refreshNativePersonaList(savedName);
 }
 
 export async function deletePersona(id) {
@@ -798,6 +852,7 @@ export async function deletePersona(id) {
     } catch (e) {
         console.warn('[PersonaLibrary] could not emit PERSONA_DELETED', e);
     }
+    refreshNativePersonaList();
 }
 
 export async function confirmDialog(message) {
@@ -840,7 +895,72 @@ export async function createPersona(name) {
         console.warn('[PersonaLibrary] could not seed a default avatar image for the new persona', e);
     }
     ctx()?.saveSettingsDebounced?.();
+    // Without this, the persona was created correctly — power_user had the
+    // right data — but the native Persona Management panel's own list
+    // never found out, and stayed stale until a full page reload (which
+    // happens to call this same native function itself on startup). This
+    // is the one call site of refreshNativePersonaList() that matters most:
+    // a brand new persona wasn't just showing stale info, it wasn't in the
+    // native list AT ALL until that reload. Passing avatarId jumps the
+    // native list's pagination straight to it too, same as native's own
+    // "Create" button flow does.
+    refreshNativePersonaList(avatarId);
     return avatarId;
+}
+
+/**
+ * Native ST persona locks (default / character / chat) — see personas.js's
+ * own isPersonaLocked/setPersonaLockState. These are NOT a Persona Library
+ * concept, unlike Variants' character/chat bindings above: they're ST's own
+ * three-tier persona-selection mechanism (chat lock > character lock >
+ * default persona), confirmed directly against ST's exported
+ * isPersonaLocked() switch statement and PersonaLockType ('chat' | 'character'
+ * | 'default'). This file only exposes them, it doesn't reimplement any of
+ * the resolution logic — that stays entirely native.
+ *
+ * IMPORTANT constraint, also confirmed from source: both native functions
+ * operate on ST's currently-ACTIVE persona (the module-level `user_avatar`
+ * inside personas.js), not on an arbitrary persona id passed as an argument.
+ * There is no native way to query or change a lock for a persona that isn't
+ * the one currently selected — exactly like the native Persona Management
+ * panel, where you have to select a persona before its lock buttons do
+ * anything. So isPersonaLockable() below is what gates the UI: only the
+ * currently-active persona's card should show live, clickable lock buttons.
+ */
+
+/** Whether persona `id` is the one ST's native lock functions would act on. */
+export function isPersonaLockable(id) {
+    return id === activeUserAvatar;
+}
+
+/**
+ * @param {string} id
+ * @param {'default'|'character'|'chat'} type
+ * @returns {boolean}
+ */
+export function isPersonaLocked(id, type) {
+    if (!isPersonaLockable(id)) return false;
+    try {
+        return stIsPersonaLocked(type);
+    } catch (e) {
+        console.warn('[PersonaLibrary] isPersonaLocked failed', e);
+        return false;
+    }
+}
+
+/**
+ * @param {string} id
+ * @param {'default'|'character'|'chat'} type
+ * @param {boolean} state
+ */
+export async function setPersonaLockState(id, type, state) {
+    if (!isPersonaLockable(id)) {
+        throw new Error('Select this persona as active before changing its locks.');
+    }
+    await stSetPersonaLockState(state, type);
+    // ST's own lock functions already toast/update the native panel; this
+    // just makes sure Persona Library's own gallery card re-renders too.
+    notifyPersonaUpdated(id);
 }
 
 export const stAdapter = {
@@ -868,6 +988,9 @@ export const stAdapter = {
     getCharacterBindingId,
     ensureCharacterBindingId,
     getChatBindingId,
+    isPersonaLockable,
+    isPersonaLocked,
+    setPersonaLockState,
     ensureChatBindingId,
     getCurrentChatLabel,
     composeVariants,

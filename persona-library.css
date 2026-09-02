@@ -222,13 +222,23 @@
     box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
 }
 
-/* -- header: big name on the left, icon actions + save + close on the right -- */
+/* -- header: big name on the left, icon actions + save + close on the right --
+   flex-wrap is unconditional (not gated behind a width breakpoint) on
+   purpose: this row's total button count changes over time (three lock
+   buttons were added after this was last tuned, and clipped Save/Close off
+   the edge below the OLD single hard-coded breakpoint that assumed the OLD
+   button count). Wrapping based on actual available space, rather than a
+   magic pixel number tied to whatever the button count happened to be at
+   the time, means this can't quietly break again the next time a button is
+   added — it degrades to a second row instead of overflowing, at any width,
+   with any number of buttons. */
 .pl-detail-header {
     flex: 0 0 auto;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: 8px 12px;
     padding: 12px 16px;
 }
 
@@ -269,6 +279,7 @@
     align-items: center;
     gap: 10px;
     min-width: 0;
+    flex: 1 1 200px; /* shrinks first, wraps to its own row once it can't */
 }
 
 .pl-active-pill {
@@ -298,11 +309,29 @@
     background: var(--pl-surface-2);
 }
 
+/* The actual root cause of Save/Close getting clipped on narrower screens
+   used to be `flex: 0 0 auto` here — flex-shrink: 0 meant this row was
+   forbidden from ever getting narrower than ALL its buttons laid out in one
+   line, no matter how little room was available, so it just overflowed
+   straight off the modal's edge (clipped by .pl-detail-modal's own
+   overflow: hidden) rather than wrapping — no width breakpoint could have
+   fixed that on its own, since the row never became width-constrained in
+   the first place for its own flex-wrap to have anything to react to.
+   Letting it actually shrink (flex: 1 1 auto + min-width: 0, the latter
+   overriding a flex item's default min-width: auto content floor) plus
+   flex-wrap here specifically (not just on the parent) makes this reflow
+   onto a second row purely based on available space, at any width, with
+   however many buttons happen to be here — not tied to a specific button
+   count or a magic pixel number that needs re-tuning every time one gets
+   added. */
 .pl-header-actions {
     display: flex;
     align-items: center;
     gap: 6px;
-    flex: 0 0 auto;
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 .pl-icon-btn {
@@ -324,12 +353,26 @@
 }
 
 .pl-back-to-grid {
-    width: auto;
-    height: auto;
-    padding: 6px 10px;
-    gap: 6px;
-    font-size: 0.85em;
-    margin-right: auto; /* pushes the rest of headerActions to the right, separating "navigate" from "act on this persona" */
+    /* Always icon-only and the same 34x34 square as every other header
+       icon button now, not just below a narrow-screen breakpoint — a
+       button carrying its own text label was consistently the widest
+       thing in this row and the main reason it needed special-casing at
+       all. The hover title (set in gallery.js) still says what it does. */
+
+    /* NOT margin-right: auto — .pl-header-actions is `flex: 1 1 auto` (so
+       it can grow/shrink to actually fix the overflow bug elsewhere in
+       this file), which means "auto" here claimed ALL the row's leftover
+       space on a wide screen, stranding this button alone with a huge,
+       width-dependent gap before the real action cluster — reading as
+       "randomly floating in the middle," not "separated from the other
+       buttons." A small FIXED gap plus a subtle divider line gets the
+       actual goal (a deliberate buffer so this doesn't get misclicked
+       alongside "Use this persona," WITHOUT drifting away from the rest
+       of the toolbar as the window gets wider) without re-introducing
+       that unbounded-space problem. */
+    margin-right: 14px;
+    padding-right: 14px;
+    border-right: 1px solid var(--pl-border);
 }
 
 .pl-icon-btn.pl-icon-primary {
@@ -345,6 +388,79 @@
 .pl-icon-btn.pl-icon-danger:hover {
     background: color-mix(in srgb, #e5484d 35%, transparent);
     border-color: #e5484d;
+}
+
+/* Native persona locks (default / character / chat) — see isPersonaLockable()
+   in st-adapter.js. Amber/gold is used deliberately here rather than the
+   usual accent color, echoing the yellow-border convention ST's own native
+   Persona Management panel already uses to mark the default persona, so a
+   locked state reads as "locked" at a glance rather than just "selected". */
+.pl-icon-btn.pl-lock-btn.pl-lock-active {
+    background: color-mix(in srgb, #f5b942 30%, transparent);
+    border-color: #f5b942;
+    color: #f5b942;
+}
+
+.pl-icon-btn.pl-lock-btn.pl-lock-disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.pl-icon-btn.pl-lock-btn.pl-lock-disabled:hover {
+    background: var(--pl-surface-2);
+}
+
+/* Composite "chat lock" icon: a message/page glyph with a small lock badge
+   layered on top — fa-layers handles the stacking, we just position the
+   badge into the bottom-right corner and give it a little backing plate so
+   it stays legible over the message glyph's own strokes. */
+.pl-lock-icon-stack {
+    position: relative;
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+}
+
+.pl-lock-icon-badge {
+    position: absolute;
+    right: -0.3em;
+    bottom: -0.3em;
+    font-size: 0.55em;
+    background: var(--pl-surface-2);
+    border-radius: 50%;
+    padding: 0.2em;
+    line-height: 1;
+    /* Same bare-.fa-lock collision as the Default button (see the
+       .pl-lock-icon-plain fix below) — this badge carries .fa-lock too,
+       so it needs the identical forced-visibility treatment or it
+       disappears the same way the Default icon did. */
+    display: inline-block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+.pl-icon-btn.pl-lock-btn.pl-lock-active .pl-lock-icon-badge {
+    background: color-mix(in srgb, #f5b942 55%, var(--pl-surface-2));
+}
+
+/* Forces the Default-lock icon visible regardless of whatever native ST
+   CSS scoping around its own .fa-lock persona-lock buttons was hiding
+   it — see the comment in gallery.js's lockIcon(). Scoped tightly to our
+   own wrapper class so this can't leak out and affect anything native. */
+.pl-lock-icon-plain {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 1em;
+    height: 1em;
+}
+
+.pl-lock-icon-plain .fa-lock {
+    display: inline-block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    font-size: inherit !important;
+    color: inherit !important;
 }
 
 .pl-detail-close {
@@ -380,15 +496,26 @@
     overflow: hidden;
     background: #000;
     border-right: 1px solid var(--pl-border);
+    /* Column: the image area on top, the prev/next bar below it — not an
+       overlay on the photo anymore, see .pl-hero-nav-bar. */
+    display: flex;
+    flex-direction: column;
+}
+
+.pl-hero-img-area {
+    flex: 1 1 auto;
+    min-height: 0;
     display: flex;
     align-items: center;
     justify-content: center;
+    overflow: hidden;
 }
 
 .pl-detail-hero {
     /* Fit the frame to the image's OWN proportions instead of stretching a
-       fixed-width box around it — height fills the modal, width follows the
-       image's real aspect ratio, so there's no dead black margin. */
+       fixed-width box around it — height fills the available area, width
+       follows the image's real aspect ratio, so there's no dead black
+       margin. */
     height: 100%;
     width: auto;
     max-width: 100%;
@@ -401,6 +528,42 @@
 
 .pl-detail-hero:hover {
     filter: brightness(1.08);
+}
+
+/* -- prev/next navigation: a slim bar under the photo, not an overlay on
+   top of it. Previously these were absolutely-positioned circles floating
+   over the image itself — reads as disconnected from the rest of the UI
+   (and on the stacked mobile layout, where the photo is full-width, they'd
+   land right on the subject). Living in normal flex flow here instead
+   means there's no "centered on what, exactly?" positioning question at
+   all — it just sits below the image, in every layout, full stop. */
+.pl-hero-nav-bar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 6px;
+    background: var(--pl-surface-2);
+    border-top: 1px solid var(--pl-border);
+}
+
+.pl-hero-nav-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid var(--pl-border);
+    background: var(--pl-surface);
+    color: inherit;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9em;
+}
+
+.pl-hero-nav-btn:hover {
+    background: color-mix(in srgb, var(--pl-accent) 25%, transparent);
 }
 
 /* -- lightbox: click-to-enlarge for the hero image, above the detail modal -- */
@@ -453,14 +616,120 @@
     background: rgba(0, 0, 0, 0.75);
 }
 
+/* -- "expand to full screen" editor for a Section's text body -- */
+.pl-text-focus-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100000; /* same tier as the image lightbox — mutually exclusive with it, never open together */
+    display: flex;
+    flex-direction: column;
+    background: rgba(0, 0, 0, 0.92);
+    padding: 24px;
+    box-sizing: border-box;
+}
+
+.pl-text-focus-overlay[hidden] {
+    display: none;
+}
+
+.pl-text-focus-bar {
+    flex: 0 0 auto;
+    padding: 0 56px 12px 4px; /* right padding clears the fixed close button */
+}
+
+.pl-text-focus-title {
+    font-weight: 600;
+    font-size: 1.05em;
+    opacity: 0.85;
+}
+
+.pl-text-focus-area {
+    flex: 1 1 auto;
+    width: 100%;
+    box-sizing: border-box;
+    resize: none; /* already full-viewport, a manual resize handle has nothing to add here */
+    padding: 16px 20px;
+    border-radius: 10px;
+    border: 1px solid var(--pl-border);
+    background: rgb(17, 18, 23);
+    color: inherit;
+    font: inherit;
+    font-size: 1.05em;
+    line-height: 1.6;
+}
+
+.pl-text-focus-area:focus {
+    outline: none;
+    border-color: var(--pl-accent);
+}
+
+.pl-text-focus-area:disabled {
+    opacity: 0.7;
+    cursor: default;
+}
+
+/* -- the small expand button sitting in the corner of a Section's compact textarea -- */
+.pl-section-content-wrap {
+    position: relative;
+}
+
+.pl-section-expand-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    border: 1px solid var(--pl-border);
+    background: var(--pl-surface);
+    color: inherit;
+    opacity: 0.55;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8em;
+}
+
+.pl-section-expand-btn:hover {
+    opacity: 1;
+    background: color-mix(in srgb, var(--pl-accent) 20%, var(--pl-surface));
+}
+
 .pl-detail-fields {
     flex: 1 1 auto;
     min-width: 0;
     overflow-y: auto;
+    overscroll-behavior: contain; /* see the wheel/touchmove guard in gallery.js — stops scroll chaining into the gallery grid behind the modal once this hits its own top/bottom */
+    /* Deliberate belt-and-suspenders against horizontal overflow on narrow
+       screens (the X buttons on Sections rows reported "spilling off
+       screen"). Tested the section-row flex layout itself exhaustively
+       (280-400px, box-sizing confirmed border-box throughout) and it
+       correctly shrinks at every width tested — so the row itself isn't
+       the actual culprit. Far more likely: something else in this column
+       (a long unbroken word, a URL, any fixed-width content) was forcing
+       the whole column wider than the viewport, and the X buttons —
+       sitting at the far right edge of each row — are just the first
+       thing that visibly falls off as a result. This guarantees nothing
+       in here can force that, regardless of exact source, rather than
+       chasing one specific element without a live repro to confirm
+       against.
+    */
+    overflow-x: hidden;
     padding: 16px 20px;
     display: flex;
     flex-direction: column;
     gap: 12px;
+}
+
+.pl-detail-fields * {
+    /* Long unbroken text (a URL, a run-on word in a persona description)
+       is the classic way a flex/text container gets silently forced wider
+       than its parent regardless of any flex-shrink/min-width setup —
+       overflow-wrap alone only breaks at existing word boundaries; this
+       allows a break mid-word as a last resort so nothing can push the
+       column's scrollWidth past its clientWidth. */
+    overflow-wrap: anywhere;
 }
 
 /* -- read-only "Details" tab, styled after the CharLib reference -- */
@@ -469,6 +738,7 @@
     flex: 1 1 auto;
     min-width: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 16px 20px;
     display: flex;
     flex-direction: column;
@@ -498,6 +768,7 @@
     line-height: 1.6;
     font-size: 0.92em;
     overflow-y: auto;
+    overscroll-behavior: contain;
     min-height: 160px;
     resize: vertical;
 }
@@ -613,6 +884,7 @@
     flex: 1 1 auto;
     min-width: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
     padding: 16px 20px;
     display: flex;
     flex-direction: column;
@@ -674,36 +946,9 @@
     gap: 4px;
 }
 
-/* -- prev/next navigation, fixed to the overlay edges like a lightbox -- */
-.pl-nav-btn {
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 42px;
-    height: 42px;
-    border-radius: 50%;
-    border: 1px solid var(--pl-border);
-    background: color-mix(in srgb, var(--pl-surface) 80%, black 20%);
-    color: inherit;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1em;
-    z-index: 6;
-}
-
-.pl-nav-btn:hover {
-    background: color-mix(in srgb, var(--pl-accent) 30%, transparent);
-}
-
-.pl-nav-prev {
-    left: 12px;
-}
-
-.pl-nav-next {
-    right: 12px;
-}
+/* prev/next navigation now lives as .pl-hero-nav-bar / .pl-hero-nav-btn,
+   a slim bar under the photo instead of overlaid circles on top of it —
+   see the comment above .pl-hero-nav-bar. */
 
 .pl-detail h3 {
     margin: 0;
@@ -1099,7 +1344,16 @@
 
 .pl-field-row {
     display: grid;
-    grid-template-columns: minmax(90px, 34%) 1fr auto;
+    /* 1fr alone expands to minmax(auto, 1fr) — "auto" as a track minimum
+       resolves to the content's min-content size, which for a text input
+       is a real, nonzero width browsers won't shrink below on their own.
+       On a narrow container that's enough on its own to push this row
+       wider than available space, shoving the trailing auto-sized expand/
+       remove buttons past the edge — the same "won't actually shrink"
+       trap as the header-actions overflow above, just via CSS Grid instead
+       of flexbox. minmax(0, 1fr) removes that floor so the value column
+       actually gives way before the row overflows. */
+    grid-template-columns: minmax(90px, 34%) minmax(0, 1fr) auto auto;
     gap: 6px;
     align-items: center;
 }
@@ -1127,12 +1381,25 @@
     background: var(--pl-surface);
     color: inherit;
     font-size: 0.85em;
+    min-width: 0; /* belt-and-suspenders alongside the grid track fix above */
 }
 
 .pl-field-remove {
     width: 22px;
     height: 22px;
     flex: 0 0 auto;
+}
+
+.pl-field-expand {
+    width: 22px;
+    height: 22px;
+    flex: 0 0 auto;
+    font-size: 0.72em;
+    opacity: 0.6;
+}
+
+.pl-field-expand:hover {
+    opacity: 1;
 }
 
 .pl-add-field {
@@ -1212,6 +1479,7 @@
     .pl-detail-body {
         flex-direction: column;
         overflow-y: auto;
+        overscroll-behavior: contain;
     }
 
     .pl-detail-hero-wrap {
@@ -1221,48 +1489,29 @@
         border-bottom: 1px solid var(--pl-border);
     }
 
-    .pl-nav-btn {
-        top: 130px;
-    }
+    /* Nav arrows are no longer overlaid on the image at all (see
+       .pl-hero-nav-bar) — they're a normal in-flow bar under the photo now,
+       so there's nothing layout-specific left to override here. */
 
     .pl-select {
         max-width: none;
     }
 
-    /* "Back to Grid" carries a text label the other header icon buttons
-       don't, so it's the widest thing in a row that also has to fit the
-       persona name + ACTIVE pill. At narrow widths those two collide.
-       Dropping the label and shrinking back to the same 34x34 square as
-       every other .pl-icon-btn frees that space back up — the icon alone
-       (fa-grip) still reads fine, and it now looks consistent with its
-       neighbors instead of like a special case. */
-    .pl-back-to-grid {
-        width: 34px;
-        height: 34px;
-        padding: 0;
-    }
+    /* Back to Grid is always icon-only and 34x34 now (see the base
+       .pl-back-to-grid rule) — nothing narrow-specific left to do here
+       either; the old media-query-only shrink rule is gone since the
+       base rule now does this unconditionally. */
 
-    .pl-back-to-grid span {
-        display: none;
-    }
-
-    /* Even icon-only, .pl-header-actions (Use / Image / Persona Lore /
-       Duplicate / Delete / Save / X) is a row of fixed-size buttons that
-       never shrinks — on a narrow screen it just claims space and forces
-       .pl-name-input into whatever's left, which can end up too small to
-       read. Wrapping the header onto two rows (name + ACTIVE pill on their
-       own full-width row, action icons wrapping below) fixes that without
-       hiding or truncating anything else. */
-    .pl-detail-header {
-        flex-wrap: wrap;
-    }
-
+    /* Wrapping itself (name/pill vs. action icons onto separate rows, and
+       the icons further wrapping among themselves) is now unconditional —
+       see the base .pl-detail-header and .pl-header-actions rules above,
+       which is what actually fixes buttons getting clipped rather than a
+       breakpoint. What's still narrow-specific here is just forcing the
+       name+pill onto its own guaranteed full-width row below this size,
+       rather than leaving it to flex-wrap's natural (sometimes-shares-a-
+       row) behavior, since the name reads better with room to breathe. */
     .pl-detail-header-title {
         flex: 1 1 100%;
-    }
-
-    .pl-header-actions {
-        flex-wrap: wrap;
     }
 }
 

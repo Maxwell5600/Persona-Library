@@ -9,6 +9,37 @@ nothing parses one from the other on purpose, so both stay simple and
 independently correct. If you add an entry to one, add the matching one to
 the other.
 
+## v1.6.3
+
+### Added
+- Native SillyTavern persona locks (Default / Character / Chat) wired
+  directly into the persona detail view — three lock buttons showing live
+  state and toggling the real thing via ST's own lock functions.
+- Locks only work on the currently active persona, same as native — shown
+  greyed-out with a tooltip on any other persona's card.
+
+### Fixed
+- Lock icon rendering blank, and the lock button's highlight not updating
+  until the modal was reopened.
+- Header buttons (Save, Close, etc.) getting clipped off-screen on
+  narrower widths.
+- Nav arrows floating in the wrong spot, then overlapping the photo —
+  moved to a slim bar below the image instead of an overlay.
+- Large empty gap next to the photo on narrow/stacked screens.
+- Scrolling past the bottom of the modal bleeding into the gallery grid
+  behind it.
+- Section field rows able to push their X/expand buttons off-screen.
+- "Back to Grid" is now a small icon-only button (new icon, not an X or
+  fa-grip) instead of a full-width label, and no longer drifts into an
+  isolated gap on wide screens — moved next to the action icons with a
+  small fixed buffer, not glued to them or floating alone.
+- Replace Image reordered to sit right after "Use this persona."
+- New/edited/renamed/duplicated/deleted personas now show up immediately
+  in the native Persona Management list (including its list-view
+  description preview) instead of needing a full page reload.
+
+## v1.6.2
+
 ## v1.6.2
 
 ### Fixed

@@ -298,6 +298,27 @@ export function createPersonaLibrary(container, adapter) {
     const gridWrap = el('div', { class: 'pl-grid-wrap' }, [grid]);
     const detail = el('div', { class: 'pl-detail pl-root', hidden: true });
 
+    // Stops wheel/touch scroll gestures from leaking past this overlay
+    // into whatever's behind it (the persona gallery grid) once an inner
+    // scrollable panel (Details/Edit/Preview) hits its own top or bottom.
+    // This is purely additive on top of the deliberate `position: fixed`
+    // mounting fix above/below (see the container.appendChild(detail)
+    // comment) — it doesn't touch where or how the modal is mounted, it
+    // only stops the wheel/touch EVENT from bubbling past this element.
+    // CSS alone (`overscroll-behavior: contain` on the individual
+    // scrollable panels, added alongside this) only stops chaining once
+    // an inner scrollable region's own bounds are hit — it doesn't cover
+    // scrolling while the cursor is over a non-scrollable part of the
+    // modal (the header, the photo) where there's no inner scroll
+    // container to "contain" against in the first place, so the delta
+    // would otherwise bubble straight past this element with nothing to
+    // stop it. stopPropagation (not preventDefault) is deliberate: it
+    // still lets whatever inner scrollable region the cursor happens to
+    // be over scroll completely normally, it just stops the leftover
+    // delta from reaching anything outside the modal.
+    detail.addEventListener('wheel', (e) => e.stopPropagation(), { passive: true });
+    detail.addEventListener('touchmove', (e) => e.stopPropagation(), { passive: true });
+
     // Shared by every way of leaving the detail view (backdrop click, Back
     // to Grid, the X button) so unsaved edits can never be discarded
     // silently through one path just because the warning was only wired
@@ -345,6 +366,65 @@ export function createPersonaLibrary(container, adapter) {
     };
     document.addEventListener('keydown', onLightboxKeydown);
 
+    // -- "expand to full screen" editor for a long single-line/text field --
+    // Deliberately NOT the Core/Custom-section drag-to-resize handle: that
+    // grows the row in place (still competing for space with everything
+    // else in the list), this instead opens a temporary, focused,
+    // full-viewport textarea — same overlay pattern as the image lightbox
+    // above — so someone writing a long value can actually see what they
+    // wrote without leaving the compact list layout behind. Sections stay
+    // the slim default list either way; this is purely an alternate way to
+    // EDIT a value, not a change to how the list itself looks.
+    //
+    // Built on a plain getValue/setValue pair rather than hardcoding
+    // "a section's content" specifically — that's what lets the SAME
+    // overlay back both a Custom section's content blob AND a single
+    // built-in-category field's value (a plain single-line <input>, which
+    // is the actually-cramped case: those have no way to grow at all,
+    // unlike Custom sections which already have their own drag-resize).
+    let textFocusTarget = null; // { setValue, compactEl } while open
+    const textFocusTitle = el('div', { class: 'pl-text-focus-title' });
+    const textFocusArea = el('textarea', {
+        class: 'pl-text-focus-area', spellcheck: 'false',
+        oninput: () => {
+            if (!textFocusTarget) return;
+            dirty = true;
+            textFocusTarget.setValue(textFocusArea.value);
+            // Keep the compact row's own input/textarea in sync live, not
+            // just on close — if something else re-renders the list while
+            // this is open, the compact value backing it is already
+            // current, and its own oninput never needs to fire separately.
+            textFocusTarget.compactEl.value = textFocusArea.value;
+        },
+    });
+    const textFocusClose = el('button', {
+        class: 'pl-lightbox-close', type: 'button', title: 'Done',
+        onclick: () => closeTextFocus(),
+    }, [el('i', { class: 'fa-solid fa-xmark' })]);
+    const textFocus = el('div', { class: 'pl-text-focus-overlay pl-root', hidden: true }, [
+        el('div', { class: 'pl-text-focus-bar' }, [textFocusTitle, textFocusClose]),
+        textFocusArea,
+    ]);
+    textFocus.addEventListener('click', (e) => {
+        if (e.target === textFocus) closeTextFocus();
+    });
+    /** @param {{ value: string, setValue: (v: string) => void, compactEl: HTMLElement, title: string, editable: boolean }} opts */
+    function openTextFocus({ value, setValue, compactEl, title, editable }) {
+        textFocusTarget = { setValue, compactEl };
+        textFocusTitle.textContent = title || 'Section';
+        textFocusArea.value = value ?? '';
+        textFocusArea.disabled = !editable;
+        textFocus.hidden = false;
+        textFocusArea.focus();
+    }
+    function closeTextFocus() {
+        textFocus.hidden = true;
+        textFocusTarget = null;
+    }
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !textFocus.hidden) closeTextFocus();
+    });
+
     root.style.setProperty('--pl-tile', `${settings.tile}px`);
 
     // -- true fixed-viewport overlay, like CharacterLibrary's own modal --
@@ -376,6 +456,7 @@ export function createPersonaLibrary(container, adapter) {
     // floating on top of the native UI while switched over.
     container.appendChild(detail);
     container.appendChild(lightbox);
+    container.appendChild(textFocus);
 
     root.append(
         el('div', { class: 'pl-toolbar' }, [newBtn, search, sort, size, count, loreBtn].filter(Boolean)),
@@ -503,7 +584,11 @@ export function createPersonaLibrary(container, adapter) {
 
                 const titleInput = el('input', {
                     class: 'pl-section-title', type: 'text', value: s.title,
-                    oninput: () => { dirty = true; s.title = titleInput.value; },
+                    oninput: () => {
+                        dirty = true;
+                        s.title = titleInput.value;
+                        if (textFocusTarget?.compactEl === contentInput) textFocusTitle.textContent = titleInput.value || 'Section';
+                    },
                 });
                 const enabledBox = el('input', {
                     type: 'checkbox', title: 'Include in prompt',
@@ -525,18 +610,35 @@ export function createPersonaLibrary(container, adapter) {
                         fieldsWrap.replaceChildren(...s.fields.map((f, fi) => {
                             const labelInput = el('input', {
                                 class: 'pl-field-label', type: 'text', value: f.label,
-                                oninput: () => { dirty = true; f.label = labelInput.value; s.content = fieldsToContent(s.fields); },
+                                oninput: () => {
+                                    dirty = true;
+                                    f.label = labelInput.value;
+                                    s.content = fieldsToContent(s.fields);
+                                    if (textFocusTarget?.compactEl === valueInput) {
+                                        textFocusTitle.textContent = `${titleInput.value || s.title || 'Section'} \u2014 ${labelInput.value || 'Field'}`;
+                                    }
+                                },
                             });
                             const valueInput = el('input', {
                                 class: 'pl-field-value', type: 'text', value: f.value ?? '', placeholder: '\u2014',
                                 oninput: () => { dirty = true; f.value = valueInput.value; s.content = fieldsToContent(s.fields); },
                             });
+                            const expandFieldBtn = el('button', {
+                                class: 'pl-icon-btn pl-field-expand', type: 'button', title: 'Expand to full screen',
+                                onclick: () => openTextFocus({
+                                    value: f.value,
+                                    setValue: (v) => { f.value = v; s.content = fieldsToContent(s.fields); },
+                                    compactEl: valueInput,
+                                    title: `${titleInput.value || s.title || 'Section'} \u2014 ${labelInput.value || f.label || 'Field'}`,
+                                    editable: canEdit,
+                                }),
+                            }, [el('i', { class: 'fa-solid fa-up-right-and-down-left-from-center' })]);
                             const removeFieldBtn = el('button', {
                                 class: 'pl-icon-btn pl-icon-danger pl-field-remove', type: 'button', title: 'Remove field',
                                 onclick: () => { dirty = true; s.fields.splice(fi, 1); s.content = fieldsToContent(s.fields); renderFields(); },
                             }, [el('i', { class: 'fa-solid fa-xmark' })]);
                             if (!canEdit) { for (const f2 of [labelInput, valueInput]) f2.setAttribute('disabled', ''); removeFieldBtn.setAttribute('disabled', ''); }
-                            return el('div', { class: 'pl-field-row' }, [labelInput, valueInput, removeFieldBtn]);
+                            return el('div', { class: 'pl-field-row' }, [labelInput, valueInput, expandFieldBtn, removeFieldBtn]);
                         }));
                     };
                     renderFields();
@@ -554,7 +656,17 @@ export function createPersonaLibrary(container, adapter) {
                     });
                     contentInput.value = s.content ?? '';
                     if (!canEdit) contentInput.setAttribute('disabled', '');
-                    body = contentInput;
+                    const expandBtn = el('button', {
+                        class: 'pl-section-expand-btn', type: 'button', title: 'Expand to full screen',
+                        onclick: () => openTextFocus({
+                            value: s.content,
+                            setValue: (v) => { s.content = v; },
+                            compactEl: contentInput,
+                            title: titleInput.value || s.title || 'Section',
+                            editable: canEdit,
+                        }),
+                    }, [el('i', { class: 'fa-solid fa-up-right-and-down-left-from-center' })]);
+                    body = el('div', { class: 'pl-section-content-wrap' }, [contentInput, expandBtn]);
                 }
 
                 if (!canEdit) {
@@ -1290,7 +1402,7 @@ export function createPersonaLibrary(container, adapter) {
             },
         });
 
-        async function run(fn, ok, fail) {
+        async function run(fn, ok, fail, { forceRerender = false } = {}) {
             try {
                 await fn();
                 note = ok;
@@ -1301,6 +1413,7 @@ export function createPersonaLibrary(container, adapter) {
                 note = fail;
                 globalThis.toastr?.error?.(fail, 'Persona Library');
             }
+            if (forceRerender) lastFingerprint = null;
             refresh();
         }
 
@@ -1322,12 +1435,88 @@ export function createPersonaLibrary(container, adapter) {
             // fixed at the source (see the `container.appendChild(detail)`
             // comment above), so this can go back to being a plain click.
             onclick: () => closeDetail(),
-        }, [el('i', { class: 'fa-solid fa-grip' }), el('span', { text: 'Back to Grid' })]);
+            // fa-table-cells (a small 2x2 grid of solid squares) reads
+            // unambiguously as "go to the grid view" — deliberately NOT
+            // fa-grip, which this same file already uses elsewhere (the
+            // Sections drag handle, line ~562) to mean "drag me," and NOT
+            // an X, which the close button already owns. No text label:
+            // the hover title above still says what it does.
+        }, [el('i', { class: 'fa-solid fa-table-cells' })]);
+
+        // -- native persona locks (default / character / chat) — see the
+        // comment above isPersonaLockable() in st-adapter.js. Only live
+        // and clickable for the currently-ACTIVE persona, same restriction
+        // native ST itself has (you must select a persona before locking
+        // it). For any other persona card, shown greyed-out with a tooltip
+        // explaining why, rather than silently switching personas on click.
+        const lockable = adapter.isPersonaLockable ? adapter.isPersonaLockable(p.id) : p.id === activeId;
+        // icon content per lock type:
+        //  - character: a single person-with-lock glyph (fa-user-lock)
+        //  - default:   a plain lock (fa-lock)
+        //  - chat:      a page/message glyph with a small lock badge on top
+        //    (fa-file-lock isn't in the Font Awesome FREE set — confirmed
+        //    it's an unfulfilled icon request upstream, so it silently
+        //    renders as an empty box — this stacks fa-message + fa-lock
+        //    instead, which are both guaranteed present)
+        function lockIcon(type) {
+            if (type === 'chat') {
+                return el('span', { class: 'fa-layers pl-lock-icon-stack' }, [
+                    el('i', { class: 'fa-solid fa-message' }),
+                    el('i', { class: 'fa-solid fa-lock pl-lock-icon-badge' }),
+                ]);
+            }
+            if (type === 'default') {
+                // Wrapped in its own scoped span rather than a bare
+                // <i class="fa-lock">, same fix as the chat icon above —
+                // a bare .fa-lock rendered blank in testing, almost
+                // certainly because ST's own native persona-lock buttons
+                // (added alongside isPersonaLocked/setPersonaLockState)
+                // already use that class with their own state-toggle CSS,
+                // and something in that scoping caught ours too. This span
+                // + the forced CSS below sidesteps that regardless of the
+                // exact native rule at fault.
+                return el('span', { class: 'pl-lock-icon-plain' }, [
+                    el('i', { class: 'fa-solid fa-lock' }),
+                ]);
+            }
+            return el('i', { class: 'fa-solid fa-user-lock' });
+        }
+
+        const lockBtn = (type, label) => {
+            const locked = adapter.isPersonaLocked?.(p.id, type) ?? false;
+            const title = !lockable
+                ? `${label} (select this persona first to change its lock)`
+                : locked ? `${label}: locked \u2014 click to unlock` : `${label}: not locked \u2014 click to lock`;
+            return el('button', {
+                class: `pl-icon-btn pl-lock-btn${locked ? ' pl-lock-active' : ''}${!lockable ? ' pl-lock-disabled' : ''}`,
+                type: 'button',
+                title,
+                onclick: lockable ? () => run(
+                    () => adapter.setPersonaLockState(p.id, type, !locked),
+                    locked ? `${label} unlocked.` : `${label} locked.`,
+                    `Could not change ${label.toLowerCase()} lock.`,
+                    // Locks aren't part of getPersonas()/getActiveId(), the
+                    // two things refresh()'s fingerprint hashes to decide
+                    // whether a re-render is even needed — so a lock toggle
+                    // alone produces an identical fingerprint and refresh()
+                    // bails out before renderDetail() ever runs. The native
+                    // lock still succeeds (hence the correct toast, and the
+                    // correct button state if you close and reopen — that
+                    // path calls renderDetail() directly, not through this
+                    // memo), it just doesn't get reflected live. Forcing the
+                    // memo to invalidate here makes it match immediately.
+                    { forceRerender: true },
+                ) : undefined,
+            }, [lockIcon(type)]);
+        };
 
         const headerActions = el('div', { class: 'pl-header-actions' }, [
             backToGridBtn,
             iconBtn('fa-check', p.id === activeId ? 'In use' : 'Use this persona', () => use(p.id), p.id === activeId ? 'pl-icon-active' : 'pl-icon-primary'),
             adapter.replaceAvatar && iconBtn('fa-image', 'Replace image', () => fileInput.click()),
+            adapter.setPersonaLockState && lockBtn('default', 'Default Persona Lock'),
+            adapter.setPersonaLockState && lockBtn('character', 'Character Lock'),
+            adapter.setPersonaLockState && lockBtn('chat', 'Chat Lock'),
             iconBtn('fa-book-bookmark', 'Persona Lore (native)', () => openPersonaLore(p.id, p.name)),
             adapter.duplicatePersona && iconBtn('fa-clone', 'Duplicate', () => run(() => adapter.duplicatePersona(p.id), 'Duplicated.', 'Could not duplicate.')),
             adapter.deletePersona && iconBtn('fa-trash', 'Delete', async () => {
@@ -1419,15 +1608,55 @@ export function createPersonaLibrary(container, adapter) {
 
         const heroImg = personaImg({ class: 'pl-detail-hero', alt: p.name, src: p.image, title: 'Click to enlarge' }, p.id, adapter);
         heroImg.addEventListener('click', () => openLightbox(heroImg.src, p.name));
-        const heroWrap = el('div', { class: 'pl-detail-hero-wrap' }, [heroImg]);
+        const heroImgArea = el('div', { class: 'pl-hero-img-area' }, [heroImg]);
+
+        const navPrev = canNav && el('button', {
+            class: 'pl-hero-nav-btn', type: 'button', title: 'Previous persona', onclick: () => step(-1),
+        }, [el('i', { class: 'fa-solid fa-chevron-left' })]);
+        const navNext = canNav && el('button', {
+            class: 'pl-hero-nav-btn', type: 'button', title: 'Next persona', onclick: () => step(1),
+        }, [el('i', { class: 'fa-solid fa-chevron-right' })]);
+        // A separate strip BELOW the photo, not overlaid on top of it —
+        // sitting directly on the image read as messy/disconnected from
+        // the rest of the UI, especially in the stacked mobile layout
+        // where the photo is full-width and the circular buttons used to
+        // land right on the subject's face/body. This also sidesteps the
+        // vertical-centering problem entirely (no more "centered on what,
+        // exactly?" question — see the old comment this replaced) since
+        // the bar just sits in normal flex flow under the image, not
+        // absolutely positioned against anything.
+        const navBar = canNav && el('div', { class: 'pl-hero-nav-bar' }, [navPrev, navNext].filter(Boolean));
+
+        const heroWrap = el('div', { class: 'pl-detail-hero-wrap' }, [heroImgArea, navBar].filter(Boolean));
 
         // Size the frame to the image's OWN aspect ratio via JS measurement
         // rather than relying on flexbox to shrink-wrap it — that hit a
         // circular-sizing case (width depends on height, height depends on
         // width) that left a black margin on some images.
+        //
+        // Only does this in the side-by-side (desktop) layout. In the
+        // stacked mobile layout (.pl-detail-body switches to
+        // flex-direction: column below the narrow-screen threshold),
+        // heroWrap is meant to be full-width per that CSS rule — but this
+        // function was unconditionally writing an inline `style.width`
+        // capped at 45% of the OLD side-by-side parent width regardless of
+        // which layout was active, and an inline style always wins over a
+        // stylesheet rule. That's what was leaving a large empty gap next
+        // to the photo on narrow screens: CSS said "full width," but this
+        // was quietly overriding it back down to a fraction of that. Checking
+        // the actual computed layout mode (rather than duplicating the
+        // breakpoint's pixel value here too, which would just be one more
+        // number to keep in sync) and skipping the override when stacked
+        // fixes it without touching the breakpoint itself.
         function syncHeroWidth() {
             if (!heroImg.naturalWidth || !heroImg.naturalHeight) return;
-            const h = heroWrap.clientHeight;
+            const stacked = getComputedStyle(body).flexDirection === 'column';
+            if (stacked) {
+                heroWrap.style.flex = '';
+                heroWrap.style.width = '';
+                return;
+            }
+            const h = heroImgArea.clientHeight;
             if (!h) return;
             const maxW = (heroWrap.parentElement?.clientWidth ?? 0) * 0.45;
             const w = Math.round((heroImg.naturalWidth / heroImg.naturalHeight) * h);
@@ -1441,15 +1670,12 @@ export function createPersonaLibrary(container, adapter) {
         }
 
         const body = el('div', { class: 'pl-detail-body' }, [heroWrap, tabContent]);
+        // syncHeroWidth() reads `body`'s computed flex-direction, so it has
+        // to run after `body` exists — re-measure now that it does, in
+        // addition to the load-driven calls above.
+        requestAnimationFrame(syncHeroWidth);
 
-        const navPrev = canNav && el('button', {
-            class: 'pl-nav-btn pl-nav-prev', type: 'button', title: 'Previous persona', onclick: () => step(-1),
-        }, [el('i', { class: 'fa-solid fa-chevron-left' })]);
-        const navNext = canNav && el('button', {
-            class: 'pl-nav-btn pl-nav-next', type: 'button', title: 'Next persona', onclick: () => step(1),
-        }, [el('i', { class: 'fa-solid fa-chevron-right' })]);
-
-        const modal = el('div', { class: 'pl-detail-modal' }, [header, tabBar, body, navPrev, navNext].filter(Boolean));
+        const modal = el('div', { class: 'pl-detail-modal' }, [header, tabBar, body].filter(Boolean));
         detail.replaceChildren(modal);
     }
 

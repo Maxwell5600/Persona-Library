@@ -16,6 +16,24 @@
  */
 export const CHANGELOG = [
     {
+        version: '1.6.3',
+        added: [
+            'Native SillyTavern persona locks (Default / Character / Chat) wired directly into the persona detail view \u2014 three lock buttons showing live state and toggling the real thing via ST\u2019s own lock functions.',
+            'Locks only work on the currently active persona, same as native \u2014 shown greyed-out with a tooltip on any other persona\u2019s card.',
+        ],
+        fixed: [
+            'Lock icon rendering blank, and the lock button\u2019s highlight not updating until the modal was reopened.',
+            'Header buttons (Save, Close, etc.) getting clipped off-screen on narrower widths.',
+            'Nav arrows floating in the wrong spot, then overlapping the photo \u2014 moved to a slim bar below the image instead of an overlay.',
+            'Large empty gap next to the photo on narrow/stacked screens.',
+            'Scrolling past the bottom of the modal bleeding into the gallery grid behind it.',
+            'Section field rows able to push their X/expand buttons off-screen.',
+            '"Back to Grid" is now a small icon-only button (new icon, not an X or fa-grip) instead of a full-width label, and no longer drifts into an isolated gap on wide screens \u2014 moved next to the action icons with a small fixed buffer, not glued to them or floating alone.',
+            'Replace Image reordered to sit right after "Use this persona."',
+            'New/edited/renamed/duplicated/deleted personas now show up immediately in the native Persona Management list (including its list-view description preview) instead of needing a full page reload.',
+        ],
+    },
+    {
         version: '1.6.2',
         fixed: [
             'The real root cause of the "saved changes don\u2019t show up until you switch personas and back" bug \u2014 the 1.6.1 fix addressed a genuine, confirmed part of this (the persona_description singular field never being written), but a saved edit still didn\u2019t appear in the native #persona_description textarea or the live prompt without a persona switch. Turns out `ctx()?.setPersonaDescription` \u2014 called after every write, meant to refresh the native panel \u2014 has NEVER actually existed: confirmed directly against SillyTavern\u2019s own st-context.js source, setPersonaDescription is exported from personas.js but never re-exported through the public getContext() object this extension was calling it through. Every one of those calls, in every version, including the ones that already fixed the underlying data, was a silent no-op. The data was correct after 1.6.1 (which is why the AI backend eventually received the right text once a generation happened to run past the native panel\u2019s stale display) \u2014 the visible native panel itself just never got told to re-read it, so it sat stale until a persona switch triggered SillyTavern\u2019s own internal call to the real function. Fixed by importing the real, actually-exported setPersonaDescription directly from personas.js instead of going through the broken proxy \u2014 the same pattern already used elsewhere in this file for initPersona. This should be the actual, complete fix for the reported behavior, not just a partial one.',
