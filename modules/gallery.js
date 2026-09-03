@@ -1435,24 +1435,38 @@ export function createPersonaLibrary(container, adapter) {
             // fixed at the source (see the `container.appendChild(detail)`
             // comment above), so this can go back to being a plain click.
             onclick: () => closeDetail(),
-            // Composite icon, same pattern as the Chat Lock badge above:
-            // fa-table-cells (a small 2x2 grid) as the main shape — reads
-            // as "the gallery" — with a small fa-arrow-left badge tucked
-            // into the corner for "go back." A single icon on its own kept
-            // needing a caption to be unambiguous: fa-table-cells alone
-            // reads as neutral "grid view," not specifically "go back,"
-            // and fa-arrow-left alone doesn't say *where* it's going. NOT
-            // fa-grip (already used elsewhere in this file, the Sections
-            // drag handle, to mean "drag me") and NOT a single fa-image
-            // (too similar to the separate "Replace image" button right
-            // next to this one — confusable at a glance). No text label:
-            // the hover title above still says what it does.
-        }, [
-            el('span', { class: 'fa-layers pl-back-to-grid-icon-stack' }, [
-                el('i', { class: 'fa-solid fa-table-cells' }),
-                el('i', { class: 'fa-solid fa-arrow-left pl-back-to-grid-icon-badge' }),
-            ]),
-        ]);
+        }, []);
+        // Hand-drawn inline SVG instead of stacked Font Awesome icons. The
+        // fa-layers approach (a grid glyph + a small arrow glyph badged on
+        // top of it, same pattern the Chat Lock icon uses) rendered
+        // unreliably here — undersized and missing its badge entirely —
+        // and fa-layers is really meant to be driven by FA's own SVG+JS
+        // engine with explicit data-fa-transform attributes, neither of
+        // which this codebase uses; it was borrowed CSS-only and never had
+        // solid footing. Two small hand-drawn shapes sidestep that
+        // entirely — there's no font glyph to fail to load or size
+        // unpredictably, just plain vector paths this file fully owns.
+        // Set via innerHTML (not the el() helper) because el() creates
+        // elements with document.createElement, which does NOT correctly
+        // create SVG/rect/path elements — they need the SVG namespace,
+        // which the browser's HTML parser only applies correctly when
+        // parsing markup that already contains a <svg> tag, e.g. via
+        // innerHTML, not via createElement('svg') one tag at a time.
+        backToGridBtn.innerHTML = `
+            <span class="pl-back-to-grid-icon-stack">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <rect x="2" y="2" width="9" height="9" rx="2"></rect>
+                    <rect x="13" y="2" width="9" height="9" rx="2"></rect>
+                    <rect x="2" y="13" width="9" height="9" rx="2"></rect>
+                    <rect x="13" y="13" width="9" height="9" rx="2"></rect>
+                </svg>
+                <span class="pl-back-to-grid-icon-badge">
+                    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M17 4 L5 12 L17 20 Z"></path>
+                    </svg>
+                </span>
+            </span>
+        `;
 
         // -- native persona locks (default / character / chat) — see the
         // comment above isPersonaLockable() in st-adapter.js. Only live

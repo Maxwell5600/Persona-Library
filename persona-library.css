@@ -395,36 +395,70 @@
     background: var(--pl-border);
 }
 
-/* Composite "back to grid" icon: fa-table-cells (the grid) as the main
-   shape, with a small fa-arrow-left badge in the bottom-left corner for
-   "go back" — same fa-layers stacking pattern as the Chat Lock icon above,
-   mirrored to the opposite corner so the two composite icons in this
-   header don't visually collide with each other. */
+/* Composite "back to grid" icon: a hand-drawn 2x2 grid as the main shape,
+   with a small hand-drawn back-arrow badge in the bottom-left corner. Both
+   are plain inline SVG (built directly in gallery.js, not Font Awesome
+   glyphs) — the earlier fa-layers-based version of this icon (matching
+   the Chat Lock badge's pattern) rendered unreliably in practice
+   (undersized, badge not appearing at all), so this sidesteps font-glyph
+   rendering for this one icon entirely rather than patching that further.
+
+   Every dimension here is a fixed PX, on purpose — no em anywhere in this
+   icon. The stack was 1.15em (computing to ~14.5px through .pl-root's
+   0.95em times .pl-icon-btn's own 0.95em) while an earlier pass set the
+   badge to a fixed 15px — the badge ended up LARGER than the entire icon
+   it was meant to be a small corner accent on, which is exactly why it
+   swallowed the grid instead of sitting beside it. Fixed pixels for both,
+   checked against each other directly below, so the badge is verifiably
+   ~55% of the main icon's size rather than a guess that happened to land
+   badly. */
 .pl-back-to-grid-icon-stack {
     position: relative;
     display: inline-block;
-    width: 1em;
-    height: 1em;
+    width: 20px;
+    height: 20px;
+}
+
+.pl-back-to-grid-icon-stack > svg {
+    /* The main grid shape fills the stack box completely — plain SVG
+       sizing, not dependent on any font's own glyph metrics. */
+    width: 100%;
+    height: 100%;
+    display: block;
 }
 
 .pl-back-to-grid-icon-badge {
     position: absolute;
-    left: -0.3em;
-    bottom: -0.3em;
-    font-size: 0.55em;
-    background: var(--pl-surface-2);
+    /* 11px circle against a 20px icon — clearly the smaller of the two,
+       not a near-duplicate of it. -4px offset means a bit more than half
+       the badge sits OUTSIDE the grid's own 20x20 box, in open space next
+       to it, rather than buried on top of it — same "small accent tucked
+       into the corner" look the original mockup had. */
+    left: -4px;
+    bottom: -4px;
+    width: 11px;
+    height: 11px;
     border-radius: 50%;
-    padding: 0.2em;
-    line-height: 1;
-    /* Forced visible as a precaution, not a confirmed collision this time
-       — fa-arrow-left is a different glyph than the fa-lock that actually
-       collided with something in ST's own CSS earlier, so this may not be
-       needed at all. Left in anyway since it's harmless if unnecessary,
-       and saves a repeat of that debugging round if it turns out this
-       icon collides with something too. */
-    display: inline-block !important;
-    visibility: visible !important;
-    opacity: 1 !important;
+    background: var(--pl-surface-2);
+    border: 1px solid var(--pl-border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.pl-back-to-grid-icon-badge svg {
+    width: 7px;
+    height: 7px;
+    display: block;
+    /* Deliberately NOT currentColor here (unlike the grid shape above) —
+       currentColor inherits this button's ordinary muted icon color,
+       which doesn't stand out against a dark badge circle sitting on a
+       dark button. --pl-accent is the same color this file already uses
+       for "pay attention to this" states elsewhere (the active/"in use"
+       checkmark, the lock-active highlight), so a bright arrow reads as
+       deliberately called-out rather than blending into the rest of the
+       icon at a glance. */
+    color: var(--pl-accent);
 }
 
 .pl-icon-btn.pl-icon-primary {
