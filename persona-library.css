@@ -1575,6 +1575,38 @@
         border-bottom: 1px solid var(--pl-border);
     }
 
+    /* Let ONLY .pl-detail-body's own scroll (immediately above) govern the
+       whole column here — image, nav bar, and tab content scroll TOGETHER
+       as one unit. Without this, each tab's own independent overflow-y:auto
+       (correct on wide screens, where the image and content sit side by
+       side and only the content column should scroll on its own) quietly
+       absorbs all the overflow internally before .pl-detail-body's outer
+       scroll ever gets a chance to activate — these are flex: 1 1 auto, so
+       they just grow to fill whatever's left after the fixed-height hero
+       image and scroll THEIR OWN overflow, meaning .pl-detail-body's total
+       rendered height never actually exceeds its container and its own
+       overflow-y:auto above never triggers. Net effect without this: the
+       hero image and header are structurally pinned at the top forever on
+       a narrow/short screen — permanently eating space with no way to
+       scroll them out of the way to see more of what you're editing. */
+    .pl-detail-fields,
+    .pl-preview-view,
+    .pl-details-view {
+        overflow-y: visible;
+        /* flex: 1 1 auto (the base rule) stretches this to fill whatever's
+           left in the row — which is exactly the height it then needs
+           something to scroll WITHIN, defeating the point above.
+           flex: 0 0 auto instead sizes it to its own true content height,
+           like a normal block element, so there's nothing of its own left
+           to scroll — the true total height (image + this) is what
+           .pl-detail-body actually sees and scrolls. Confirmed empirically:
+           overflow-y: visible alone did NOT reliably make an ancestor flex
+           container's scrollHeight account for an auto-stretched flex
+           child's true content extent in this nested arrangement — this
+           does, verified with real scroll measurements before shipping. */
+        flex: 0 0 auto;
+    }
+
     /* Nav arrows are no longer overlaid on the image at all (see
        .pl-hero-nav-bar) — they're a normal in-flow bar under the photo now,
        so there's nothing layout-specific left to override here. */
