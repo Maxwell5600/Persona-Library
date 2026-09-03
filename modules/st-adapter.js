@@ -838,14 +838,54 @@ export async function duplicatePersona(id) {
 export async function deletePersona(id) {
     const pu = powerUser();
     const name = pu.personas?.[id];
+    const c = ctx();
+
+    // The actual root cause of the "ghost persona reappears after refresh"
+    // bug: confirmed directly against SillyTavern's own personas.js source.
+    // On every load, migrateNonPersonaUser() checks whether `user_avatar`
+    // (the currently-ACTIVE persona id) has a matching power_user.personas
+    // entry — if not, it silently CREATES a fresh blank one at that same
+    // id. We were correctly deleting the file and both settings entries,
+    // but never updating anything that still POINTS at the deleted id —
+    // so if the deleted persona was the active one, `user_avatar` still
+    // referenced it going into the next reload, and ST's own self-healing
+    // machinery resurrected it as a blank ghost. Same category of gap for
+    // power_user.default_persona (the "Default" lock) and this chat's own
+    // chat_metadata.persona (the "Chat" lock) — both are pointer fields
+    // that needed clearing too, not just the two entries the pointer
+    // resolves to.
+    if (id === activeUserAvatar) {
+        const otherIds = Object.keys(pu.personas ?? {}).filter((pid) => pid !== id);
+        if (otherIds.length) {
+            try { await stSetUserAvatar(otherIds[0], { toastPersonaNameChange: false }); } catch (e) { console.warn('[PersonaLibrary] could not switch away from the persona being deleted', e); }
+        }
+        // If this WAS the only persona, there's nothing sensible to switch
+        // to — leaving user_avatar pointing at the (about to be deleted)
+        // id is fine here: ST's own migrateNonPersonaUser will create a
+        // fresh blank persona for it on next load, which is the correct,
+        // expected fallback when your only persona is gone, not a bug.
+    }
+
     const res = await fetch('/api/avatars/delete', {
         method: 'POST',
         headers: await headers(true),
         body: JSON.stringify({ avatar: id }),
     });
-    if (!res.ok) throw new Error(`Delete failed: ${res.status}`);
+    // 404 specifically means the file was already gone (confirmed against
+    // ST's own /api/avatars/delete handler) — treat that as fine and keep
+    // going rather than aborting the rest of the cleanup. Without this, a
+    // persona whose file is already missing for any reason could never be
+    // fully removed through this function at all: the settings-side entries
+    // (pu.personas/pu.persona_descriptions) would be stuck forever, since
+    // the throw below would abort before ever reaching them.
+    if (!res.ok && res.status !== 404) throw new Error(`Delete failed: ${res.status}`);
     delete pu.personas?.[id];
     delete pu.persona_descriptions?.[id];
+    if (pu.default_persona === id) pu.default_persona = null;
+    if (c?.chatMetadata?.persona === id) {
+        delete c.chatMetadata.persona;
+        try { await c?.saveMetadata?.(); } catch (e) { console.warn('[PersonaLibrary] could not save chat metadata after clearing a deleted persona\u2019s chat lock', e); }
+    }
     ctx()?.saveSettingsDebounced?.();
     try {
         ctx()?.eventSource?.emit?.(ctx()?.event_types?.PERSONA_DELETED, { avatarId: id, name });

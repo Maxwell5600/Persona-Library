@@ -31,6 +31,8 @@ export const CHANGELOG = [
             '"Back to Grid" is now a small icon-only button \u2014 a composite grid + back-arrow icon (not a bare grid, not an X) so it\u2019s unambiguous at a glance \u2014 instead of a full-width label, and no longer drifts into an isolated gap on wide screens \u2014 moved next to the action icons with a small fixed buffer, not glued to them or floating alone.',
             'Replace Image reordered to sit right after "Use this persona."',
             'New/edited/renamed/duplicated/deleted personas now show up immediately in the native Persona Management list (including its list-view description preview) instead of needing a full page reload.',
+            'The hero image and header staying permanently pinned at the top on narrow/short screens with no way to scroll past them \u2014 the Edit/Preview/Details tab content had its own independent scroll that silently absorbed all the overflow before the outer modal\u2019s scroll ever got a chance to activate.',
+            'Deleting the currently-ACTIVE persona leaving a blank \u201cghost\u201d persona behind after a SillyTavern refresh \u2014 the active-persona pointer wasn\u2019t being updated on delete, so SillyTavern\u2019s own self-healing logic silently recreated it at the same id on next load. Also now clears a matching default-persona lock or chat-persona lock, and no longer aborts cleanup if the avatar file was already gone.',
         ],
     },
     {
