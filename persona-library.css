@@ -365,14 +365,34 @@
        space on a wide screen, stranding this button alone with a huge,
        width-dependent gap before the real action cluster — reading as
        "randomly floating in the middle," not "separated from the other
-       buttons." A small FIXED gap plus a subtle divider line gets the
-       actual goal (a deliberate buffer so this doesn't get misclicked
-       alongside "Use this persona," WITHOUT drifting away from the rest
-       of the toolbar as the window gets wider) without re-introducing
-       that unbounded-space problem. */
-    margin-right: 14px;
-    padding-right: 14px;
-    border-right: 1px solid var(--pl-border);
+       buttons." A small FIXED gap gets the actual goal (a deliberate
+       buffer so this doesn't get misclicked alongside "Use this persona,"
+       WITHOUT drifting away from the rest of the toolbar as the window
+       gets wider) without re-introducing that unbounded-space problem.
+       Deliberately margin only, NOT padding-right/border-right directly
+       on this button: those consume space INSIDE the button's own content
+       box, and since .pl-icon-btn (the base class) centers its content
+       via flexbox, asymmetric interior padding pushed the icon visibly
+       off-center and made this one button a different, wider shape than
+       every other 34x34 icon button next to it. margin sits OUTSIDE the
+       box entirely, so this stays a perfectly plain, centered square like
+       all its neighbors — the divider line is a pseudo-element floating
+       in that external gap instead, not part of the button itself. */
+    position: relative;
+    margin-right: 18px;
+}
+
+.pl-back-to-grid::after {
+    /* The divider line itself, floating in the margin gap created above —
+       not inside the button, so it can't affect the button's own interior
+       centering the way padding/border-right did. */
+    content: '';
+    position: absolute;
+    top: 6px;
+    bottom: 6px;
+    right: -10px;
+    width: 1px;
+    background: var(--pl-border);
 }
 
 /* Composite "back to grid" icon: fa-table-cells (the grid) as the main
