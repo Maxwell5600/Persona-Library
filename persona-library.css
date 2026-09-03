@@ -375,6 +375,38 @@
     border-right: 1px solid var(--pl-border);
 }
 
+/* Composite "back to grid" icon: fa-table-cells (the grid) as the main
+   shape, with a small fa-arrow-left badge in the bottom-left corner for
+   "go back" — same fa-layers stacking pattern as the Chat Lock icon above,
+   mirrored to the opposite corner so the two composite icons in this
+   header don't visually collide with each other. */
+.pl-back-to-grid-icon-stack {
+    position: relative;
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+}
+
+.pl-back-to-grid-icon-badge {
+    position: absolute;
+    left: -0.3em;
+    bottom: -0.3em;
+    font-size: 0.55em;
+    background: var(--pl-surface-2);
+    border-radius: 50%;
+    padding: 0.2em;
+    line-height: 1;
+    /* Forced visible as a precaution, not a confirmed collision this time
+       — fa-arrow-left is a different glyph than the fa-lock that actually
+       collided with something in ST's own CSS earlier, so this may not be
+       needed at all. Left in anyway since it's harmless if unnecessary,
+       and saves a repeat of that debugging round if it turns out this
+       icon collides with something too. */
+    display: inline-block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
 .pl-icon-btn.pl-icon-primary {
     border-color: var(--pl-accent);
     color: var(--pl-accent);

@@ -28,9 +28,10 @@ the other.
 - Large empty gap next to the photo on narrow/stacked screens.
 - Scrolling past the bottom of the modal bleeding into the gallery grid
   behind it.
-- Section field rows able to push their X/expand buttons off-screen.
-- "Back to Grid" is now a small icon-only button (new icon, not an X or
-  fa-grip) instead of a full-width label, and no longer drifts into an
+- Hardened section field rows so their X/expand buttons can't get pushed off-screen.
+- "Back to Grid" is now a small icon-only button — a composite grid +
+  back-arrow icon (not a bare grid, not an X) so it's unambiguous at a
+  glance — instead of a full-width label, and no longer drifts into an
   isolated gap on wide screens — moved next to the action icons with a
   small fixed buffer, not glued to them or floating alone.
 - Replace Image reordered to sit right after "Use this persona."
