@@ -300,24 +300,36 @@ export function createPersonaLibrary(container, adapter) {
 
     // Stops wheel/touch scroll gestures from leaking past this overlay
     // into whatever's behind it (the persona gallery grid) once an inner
-    // scrollable panel (Details/Edit/Preview) hits its own top or bottom.
-    // This is purely additive on top of the deliberate `position: fixed`
-    // mounting fix above/below (see the container.appendChild(detail)
-    // comment) — it doesn't touch where or how the modal is mounted, it
-    // only stops the wheel/touch EVENT from bubbling past this element.
-    // CSS alone (`overscroll-behavior: contain` on the individual
-    // scrollable panels, added alongside this) only stops chaining once
-    // an inner scrollable region's own bounds are hit — it doesn't cover
-    // scrolling while the cursor is over a non-scrollable part of the
-    // modal (the header, the photo) where there's no inner scroll
-    // container to "contain" against in the first place, so the delta
-    // would otherwise bubble straight past this element with nothing to
-    // stop it. stopPropagation (not preventDefault) is deliberate: it
-    // still lets whatever inner scrollable region the cursor happens to
-    // be over scroll completely normally, it just stops the leftover
-    // delta from reaching anything outside the modal.
-    detail.addEventListener('wheel', (e) => e.stopPropagation(), { passive: true });
-    detail.addEventListener('touchmove', (e) => e.stopPropagation(), { passive: true });
+    // scrollable panel hits its own top or bottom. This is purely additive
+    // on top of the deliberate `position: fixed` mounting fix above/below
+    // (see the container.appendChild(detail) comment) — it doesn't touch
+    // where or how the modal is mounted, it only stops the wheel/touch
+    // EVENT from bubbling past this element.
+    //
+    // Only intercepts when there's genuinely NO scrollable ancestor
+    // between the touch/cursor point and this element — i.e. only over
+    // truly "dead" areas like the header, where CSS overscroll-behavior:
+    // contain (on the actual scrollable panels) has nothing local to lean
+    // on. Deliberately checks by WALKING UP FOR A REAL overflow:auto
+    // ancestor with actual overflow, rather than a hardcoded class name:
+    // which element is/isn't a scroll container changes between wide and
+    // narrow layouts (the hero image sits beside a scrollable column on
+    // wide screens, but INSIDE one on narrow screens, since the scroll-trap
+    // fix folded it into .pl-detail-body's own scroll area there) — a
+    // class-name check would only be correct for one of those two cases.
+    // This adapts to whichever is actually active instead of assuming one.
+    function nearestScrollContainer(node) {
+        while (node && node !== detail) {
+            const style = getComputedStyle(node);
+            if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && node.scrollHeight > node.clientHeight) {
+                return node;
+            }
+            node = node.parentElement;
+        }
+        return null;
+    }
+    detail.addEventListener('wheel', (e) => { if (!nearestScrollContainer(e.target)) e.stopPropagation(); }, { passive: true });
+    detail.addEventListener('touchmove', (e) => { if (!nearestScrollContainer(e.target)) e.stopPropagation(); }, { passive: true });
 
     // Shared by every way of leaving the detail view (backdrop click, Back
     // to Grid, the X button) so unsaved edits can never be discarded
@@ -1538,7 +1550,6 @@ export function createPersonaLibrary(container, adapter) {
         const headerActions = el('div', { class: 'pl-header-actions' }, [
             backToGridBtn,
             iconBtn('fa-check', p.id === activeId ? 'In use' : 'Use this persona', () => use(p.id), p.id === activeId ? 'pl-icon-active' : 'pl-icon-primary'),
-            adapter.replaceAvatar && iconBtn('fa-image', 'Replace image', () => fileInput.click()),
             adapter.setPersonaLockState && lockBtn('default', 'Default Persona Lock'),
             adapter.setPersonaLockState && lockBtn('character', 'Character Lock'),
             adapter.setPersonaLockState && lockBtn('chat', 'Chat Lock'),
@@ -1641,6 +1652,19 @@ export function createPersonaLibrary(container, adapter) {
         const navNext = canNav && el('button', {
             class: 'pl-hero-nav-btn', type: 'button', title: 'Next persona', onclick: () => step(1),
         }, [el('i', { class: 'fa-solid fa-chevron-right' })]);
+        // Lives here, next to the photo it actually affects, rather than
+        // in the header actions row — moved per direct request. Kept OFF
+        // the photo itself (not an overlay icon on top of it) for the
+        // exact same reason the prev/next buttons aren't: see the comment
+        // below, landing controls directly on the subject's face/body read
+        // as messy in the stacked mobile layout. This row's own visibility
+        // can no longer be gated on canNav alone, though — a persona with
+        // no adjacent siblings to navigate to would otherwise lose the
+        // ability to change its portrait entirely.
+        const changePortraitBtn = adapter.replaceAvatar && el('button', {
+            class: 'pl-hero-nav-btn', type: 'button', title: 'Change portrait',
+            onclick: () => fileInput.click(),
+        }, [el('i', { class: 'fa-solid fa-image' })]);
         // A separate strip BELOW the photo, not overlaid on top of it —
         // sitting directly on the image read as messy/disconnected from
         // the rest of the UI, especially in the stacked mobile layout
@@ -1650,7 +1674,7 @@ export function createPersonaLibrary(container, adapter) {
         // exactly?" question — see the old comment this replaced) since
         // the bar just sits in normal flex flow under the image, not
         // absolutely positioned against anything.
-        const navBar = canNav && el('div', { class: 'pl-hero-nav-bar' }, [navPrev, navNext].filter(Boolean));
+        const navBar = (canNav || changePortraitBtn) && el('div', { class: 'pl-hero-nav-bar' }, [navPrev, changePortraitBtn, navNext].filter(Boolean));
 
         const heroWrap = el('div', { class: 'pl-detail-hero-wrap' }, [heroImgArea, navBar].filter(Boolean));
 
