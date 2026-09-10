@@ -9,6 +9,10 @@ nothing parses one from the other on purpose, so both stay simple and
 independently correct. If you add an entry to one, add the matching one to
 the other.
 
+## v1.6.4
+
+- Fix: "Bind to this chat" label missing card name (Avatar name) for legacy chat files which didn't include character in the chat name.  
+
 ## v1.6.3
 
 ### Added

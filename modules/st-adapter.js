@@ -345,6 +345,13 @@ export async function ensureChatBindingId() {
     return uuid;
 }
 
+/** Check for Legacy Filename format to determine chat labels **/
+
+function isLegacyFormat(filename) {
+    const datePart = filename.substring(0, filename.indexOf('@')).trim();
+    return datePart.split('-').length === 3;
+}
+
 /** Best-effort human-readable label for the current chat, display only — never used for matching. */
 export function getCurrentChatLabel() {
     function stripExt(filename) {
@@ -356,7 +363,8 @@ export function getCurrentChatLabel() {
     const c = ctx();
     const charName = stripExt(c?.characters?.[c?.characterId]?.avatar) || "Unknown Avatar";
     const chatId = c?.getCurrentChatId();
-    return chatId ? "Chat: " + chatId : `Unnamed chat with ${charName}`;
+
+    return chatId ? `Chat: ` + (isLegacyFormat(chatId)?`${charName} - `:'') + `${chatId}` : `Unnamed chat with ${charName}`;
 }
 
 function activeVariantContext() {
