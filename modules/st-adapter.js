@@ -345,11 +345,13 @@ export async function ensureChatBindingId() {
     return uuid;
 }
 
-/** Check for Legacy Filename format to determine chat labels **/
+/** Check for Legacy Filename format or custom chat name to determine chat labels **/
+/** Annoying compromise - since ST doesn't seem to guarantee display name **/
+/** In the edge case where the chat begins with a name but we can't get it, we may get doubled Char names **/
 
-function isLegacyFormat(filename) {
-    const datePart = filename.substring(0, filename.indexOf('@')).trim();
-    return datePart.split('-').length === 3;
+function prependAvatar(filename, name) {
+    //if name is the character.name and we already start with it, we don't need to add anything. Otherwise we do
+    return !filename.startsWith(name)
 }
 
 /** Best-effort human-readable label for the current chat, display only — never used for matching. */
@@ -361,10 +363,9 @@ export function getCurrentChatLabel() {
     }
 
     const c = ctx();
-    const charName = stripExt(c?.characters?.[c?.characterId]?.avatar) || "Unknown Avatar";
+    const charName = c?.characters?.[c?.characterId]?.name ?? stripExt(c?.characters?.[c?.characterId]?.avatar) || "Unknown Avatar";
     const chatId = c?.getCurrentChatId();
-
-    return chatId ? `Chat: ` + (isLegacyFormat(chatId)?`${charName} - `:'') + `${chatId}` : `Unnamed chat with ${charName}`;
+    return chatId ? `Chat: ` + (prependAvatar(chatId, charName)?`${charName} - `:'') + `${chatId}` : `Unnamed chat with ${charName}`;
 }
 
 function activeVariantContext() {

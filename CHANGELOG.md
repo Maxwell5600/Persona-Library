@@ -12,6 +12,8 @@ the other.
 ## v1.6.4
 
 - Fix: "Bind to this chat" label missing card name (Avatar name) for legacy chat files which didn't include character in the chat name.  
+- Compromise - In the (rare?) edge case where the chat title already begins with the name but we can't get the name from the character card (so have to fall back on the avatar), 
+AND the card has a collision-appended digit ("MyCard1.png", e.g.), then we might get a doubled display label ("MyCard1 - MyCard - etc.."). This is a display/label compromise only      
 
 ## v1.6.3
 
