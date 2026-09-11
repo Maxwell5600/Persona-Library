@@ -363,7 +363,7 @@ export function getCurrentChatLabel() {
     }
 
     const c = ctx();
-    const charName = c?.characters?.[c?.characterId]?.name ?? stripExt(c?.characters?.[c?.characterId]?.avatar) || "Unknown Avatar";
+    const charName = (c?.characters?.[c?.characterId]?.name ?? stripExt(c?.characters?.[c?.characterId]?.avatar)) || "Unknown Avatar";
     const chatId = c?.getCurrentChatId();
     return chatId ? `Chat: ` + (prependAvatar(chatId, charName)?`${charName} - `:'') + `${chatId}` : `Unnamed chat with ${charName}`;
 }
