@@ -16,6 +16,12 @@
  */
 export const CHANGELOG = [
     {
+        version: '1.7.2',
+        fixed: [
+            'Found the actual cause of the Preview tab\u2019s scroll freeze (mouse wheel getting "stuck" until you grab the scrollbar by hand), after two earlier compositing-based attempts made things worse and were reverted. Root cause: .pl-preview-output (the output box, nested INSIDE the already-scrollable .pl-preview-view panel) had overscroll-behavior: contain set on it \u2014 the same boilerplate every OUTERMOST scroll container in this modal uses to stop leaking into the gallery grid behind it, accidentally applied to a nested box instead. That property\u2019s job is to stop scroll handing off to the parent once the box hits its own edge, so scrolling past the end of the output text just did nothing. The Edit tab\u2019s textarea fields are nested the same way but never had this set, which is why only Preview was affected. Removed from .pl-preview-output only; .pl-preview-view keeps its own overscroll-behavior: contain, the correct layer for it.',
+        ],
+    },
+    {
         version: '1.7.1',
         fixed: [
             '"Bind to this chat" label missing the card\u2019s name (falling back to the avatar filename) for legacy chat files that didn\u2019t include the character in the chat\u2019s own filename/id. Now prefers the character\u2019s actual display name, and prepends it to the chat id when the id doesn\u2019t already start with it. Rare edge case: if the id already resembles the name but the real name wasn\u2019t available, the label can come out looking doubled \u2014 display-only compromise, not used for any actual matching.',

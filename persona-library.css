@@ -862,7 +862,23 @@
     line-height: 1.6;
     font-size: 0.92em;
     overflow-y: auto;
-    overscroll-behavior: contain;
+    /* Deliberately NO overscroll-behavior: contain here, unlike every other
+       scroll container in this modal — this box is nested INSIDE another
+       scrollable panel (.pl-preview-view above), not the outermost layer of
+       one. `contain` was accidentally copied onto it from the same
+       boilerplate used everywhere else, and it did the one thing it's
+       designed to do: stop scroll from handing off to the parent once this
+       box hits its own top/bottom. With the cursor sitting over the output
+       text (the most likely place for it to be), that reads exactly as the
+       scroll "freezing" until you grab the actual scrollbar thumb instead
+       (which bypasses the nested-container question entirely). Leaving it
+       unset lets scroll chain to .pl-preview-view normally once this box is
+       exhausted — same as the Edit tab's <textarea> fields already do
+       (see .pl-field textarea below, which never had this set either).
+       .pl-preview-view itself still keeps its own overscroll-behavior:
+       contain, which is the correct place for it — that's the outermost
+       scrollable layer for this tab, stopping leakage into the gallery
+       grid behind the whole modal once IT is exhausted. */
     min-height: 160px;
     resize: vertical;
 }

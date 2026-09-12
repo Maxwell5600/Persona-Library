@@ -9,6 +9,26 @@ nothing parses one from the other on purpose, so both stay simple and
 independently correct. If you add an entry to one, add the matching one to
 the other.
 
+## v1.7.2
+
+### Fixed
+- Found the actual cause of the Preview tab's scroll freeze (mouse wheel
+  getting "stuck" until you grab the scrollbar by hand), after two earlier
+  attempts at a generic compositing-based fix made things worse and were
+  reverted. It came down to a real, provable structural difference between
+  tabs: `.pl-preview-output` (the output box, nested INSIDE the
+  already-scrollable `.pl-preview-view` panel) had `overscroll-behavior:
+  contain` set on it — the same boilerplate every OUTERMOST scroll
+  container in this modal uses to stop leaking into the gallery grid behind
+  it, but accidentally applied to a NESTED box instead. `contain`'s whole
+  job is to stop scroll from handing off to the parent once the box hits
+  its own top/bottom, so with the cursor over the output text, scrolling
+  past the end just did nothing — indistinguishable from frozen. The Edit
+  tab's `<textarea>` fields are nested the same way but never had this set,
+  which is why only Preview was affected. Removed it from
+  `.pl-preview-output` only; `.pl-preview-view` keeps its own
+  `overscroll-behavior: contain`, which is the correct layer for it.
+
 ## v1.7.1
 
 ### Fixed
