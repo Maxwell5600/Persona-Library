@@ -7,6 +7,7 @@
 import { createPersonaLibrary } from './modules/gallery.js';
 import { stAdapter, ctx, registerVariantGenerationHook } from './modules/st-adapter.js';
 import { mountSettingsPanel } from './modules/settings-panel.js';
+import { mountQuickSwitcher, unmountQuickSwitcher } from './modules/quick-switcher.js';
 
 const HOST_ID = 'persona-library-host';
 const NATIVE_TOGGLE_ID = 'persona-library-native-toggle';
@@ -103,6 +104,14 @@ function watch() {
         // Never refresh in response to DOM mutations. Gallery rendering itself
         // mutates this subtree, so doing so creates an endless redraw loop.
         mountSettingsPanel(); // idempotent (bails via getElementById) — cheap to retry
+        // Also idempotent, and deliberately independent of HOST_ID/mountQueued
+        // below — the Quick Switcher lives in the chat bar, not the Persona's
+        // tab, so it has to keep re-attaching itself even while that tab has
+        // never been opened, or while native-override mode is hiding the
+        // gallery. mountQuickSwitcher() itself checks the enabled setting and
+        // tears itself down when it's off, so this is safe to call on every
+        // mutation regardless of current state.
+        mountQuickSwitcher(stAdapter);
         if (document.getElementById(HOST_ID) || mountQueued) return;
         mountQueued = true;
         setTimeout(() => {
@@ -119,8 +128,14 @@ async function boot() {
     for (let i = 0; i < 60 && !mount(); i++) {
         await new Promise((r) => setTimeout(r, 500));
     }
-    if (instance) watch();
+    // Watch regardless of whether the gallery itself mounted — the Quick
+    // Switcher button lives in the chat bar and needs the same "keep
+    // retrying/reattaching" behavior even on builds/forks where the
+    // Persona's tab (personaBlock()) is never found, or hasn't been opened
+    // yet this session.
+    watch();
     mountSettingsPanel();
+    mountQuickSwitcher(stAdapter);
     if (!unregisterVariantHook) {
         try { unregisterVariantHook = registerVariantGenerationHook(); } catch (e) { console.error('[PersonaLibrary] could not register variant generation hook', e); }
     }
@@ -150,5 +165,5 @@ setTimeout(() => {
 }, 0);
 
 export async function onEnable() { safeBoot(); }
-export async function onDisable() { unmount(); try { unregisterVariantHook?.(); } catch { /* ignore */ } unregisterVariantHook = null; }
-export async function onDelete() { unmount(); try { unregisterVariantHook?.(); } catch { /* ignore */ } unregisterVariantHook = null; }
+export async function onDisable() { unmount(); unmountQuickSwitcher(); try { unregisterVariantHook?.(); } catch { /* ignore */ } unregisterVariantHook = null; }
+export async function onDelete() { unmount(); unmountQuickSwitcher(); try { unregisterVariantHook?.(); } catch { /* ignore */ } unregisterVariantHook = null; }

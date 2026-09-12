@@ -318,15 +318,45 @@ export function createPersonaLibrary(container, adapter) {
     // fix folded it into .pl-detail-body's own scroll area there) — a
     // class-name check would only be correct for one of those two cases.
     // This adapts to whichever is actually active instead of assuming one.
+    //
+    // PERF: this used to call getComputedStyle() on every ancestor, on
+    // EVERY wheel/touchmove event, with no caching at all — a mouse wheel
+    // or trackpad can fire dozens of these a second, and getComputedStyle
+    // forces the browser to run a synchronous style recalc each time. That
+    // was the actual source of the scroll stutter reported in the Preview
+    // tab (`.pl-preview-view`) and elsewhere in this modal: every single
+    // tick of a scroll gesture was paying for a full style-recalc walk up
+    // the tree before the scroll itself could even happen.
+    //
+    // Fixed with a short-lived cache per starting node (a WeakMap so
+    // entries for nodes removed by the next renderDetail() are simply
+    // garbage-collected, no manual cleanup needed) instead of computing
+    // fresh every time. A cached answer is reused for CACHE_MS — long
+    // enough to collapse a whole burst of same-target wheel ticks (which
+    // land within a few ms of each other) down to one real computation,
+    // short enough that it can't meaningfully go stale: the only thing that
+    // changes which element the walk lands on is a layout/breakpoint flip
+    // (narrow vs wide) or content height crossing the scrollable threshold,
+    // neither of which happens mid-scroll-gesture in practice.
+    const scrollContainerCache = new WeakMap();
+    const SCROLL_CACHE_MS = 50;
     function nearestScrollContainer(node) {
-        while (node && node !== detail) {
-            const style = getComputedStyle(node);
-            if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && node.scrollHeight > node.clientHeight) {
-                return node;
+        const startNode = node;
+        const cached = scrollContainerCache.get(startNode);
+        const now = performance.now();
+        if (cached && now - cached.at < SCROLL_CACHE_MS) return cached.result;
+        let n = node;
+        let result = null;
+        while (n && n !== detail) {
+            const style = getComputedStyle(n);
+            if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && n.scrollHeight > n.clientHeight) {
+                result = n;
+                break;
             }
-            node = node.parentElement;
+            n = n.parentElement;
         }
-        return null;
+        scrollContainerCache.set(startNode, { result, at: now });
+        return result;
     }
     detail.addEventListener('wheel', (e) => { if (!nearestScrollContainer(e.target)) e.stopPropagation(); }, { passive: true });
     detail.addEventListener('touchmove', (e) => { if (!nearestScrollContainer(e.target)) e.stopPropagation(); }, { passive: true });

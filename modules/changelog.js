@@ -16,6 +16,22 @@
  */
 export const CHANGELOG = [
     {
+        version: '1.7.1',
+        fixed: [
+            '"Bind to this chat" label missing the card\u2019s name (falling back to the avatar filename) for legacy chat files that didn\u2019t include the character in the chat\u2019s own filename/id. Now prefers the character\u2019s actual display name, and prepends it to the chat id when the id doesn\u2019t already start with it. Rare edge case: if the id already resembles the name but the real name wasn\u2019t available, the label can come out looking doubled \u2014 display-only compromise, not used for any actual matching.',
+        ],
+    },
+    {
+        version: '1.7.0',
+        added: [
+            'Quick Switcher: a small icon in the chat input bar\u2019s icon row, right after SillyTavern\u2019s own extensions (wand) icon, that opens a compact popup for switching your active persona without opening the Persona\u2019s tab \u2014 modeled on SillyTavern\u2019s own Extension-QuickPersona, restyled to match Persona Library: small full-resolution RECTANGLES instead of circular avatar crops (same aspect ratio as the main gallery\u2019s tiles), a SOLID popup background instead of a glassy/blurred one, and a sort menu inside the popup itself (Name A\u2013Z, Name Z\u2013A, Recently created, Token count lowest-first, or Token count highest-first) independent of the main gallery\u2019s own sort. The button itself shows the currently active persona\u2019s own avatar, falling back to a generic icon when none is active yet.',
+            'Off by default \u2014 new toggle under Extensions \u2192 Persona Library ("Quick persona switcher (chat bar)"). This is the only thing Persona Library puts in the chat UI itself rather than the Persona\u2019s tab or the Extensions panel, so it stays out of the way unless you opt in. Falls back to the end of the icon row (or a small floating button) if the extensions icon or the chat input\u2019s icon row can\u2019t be found on your build/fork, so the feature stays reachable rather than silently doing nothing.',
+        ],
+        fixed: [
+            'Some scroll stutter/lag in the detail modal, most noticeable while scrolling the Preview tab\u2019s own output box. The modal\u2019s wheel/touch handler (added to stop scroll from leaking into the gallery grid behind it) was calling getComputedStyle() on every ancestor on every single wheel/touch event, forcing a synchronous style recalc before the scroll itself could even happen. Fixed with a short-lived per-node cache instead, with no change to the actual scroll-trap behavior. (A further, bigger CSS-based attempt at the remaining stutter was tried and reverted after it caused a worse scroll-freeze regression \u2014 the stutter itself is unchanged from this fix, reduced but still present.)',
+        ],
+    },
+    {
         version: '1.6.3',
         added: [
             'Native SillyTavern persona locks (Default / Character / Chat) wired directly into the persona detail view \u2014 three lock buttons showing live state and toggling the real thing via ST\u2019s own lock functions.',

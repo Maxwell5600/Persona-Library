@@ -9,11 +9,59 @@ nothing parses one from the other on purpose, so both stay simple and
 independently correct. If you add an entry to one, add the matching one to
 the other.
 
-## v1.6.4
+## v1.7.1
 
-- Fix: "Bind to this chat" label missing card name (Avatar name) for legacy chat files which didn't include character in the chat name.  
-- Compromise - In the (rare?) edge case where the chat title already begins with the name but we can't get the name from the character card (so have to fall back on the avatar), 
-AND the card has a collision-appended digit ("MyCard1.png", e.g.), then we might get a doubled display label ("MyCard1 - MyCard - etc.."). This is a display/label compromise only      
+### Fixed
+- "Bind to this chat" label missing the card's name (falling back to the
+  avatar filename) for legacy chat files that didn't include the character
+  in the chat's own filename/id. Now prefers the character's actual display
+  name, and prepends it to the chat id when the id doesn't already start
+  with it.
+- Compromise: in the rare edge case where the chat id already begins with
+  something resembling the name, but the real name wasn't available (so
+  this fell back to a collision-suffixed avatar filename like "MyCard1"),
+  the label can come out looking doubled ("MyCard1 - MyCard1 - ..."). This
+  is a display/label compromise only, not used for any actual matching.
+
+## v1.7.0
+
+### Added
+- **Quick Switcher**: a small icon mounted next to the chat input bar
+  (positioned right after the extensions wand icon) showing the current
+  persona's own avatar — click it for a compact popup to switch personas
+  without opening the Persona's tab at all. Modeled on SillyTavern's own
+  [Extension-QuickPersona](https://github.com/SillyTavern/Extension-QuickPersona),
+  restyled to match Persona Library:
+  - Small **full-resolution rectangles** instead of circular avatar crops,
+    both for the button itself and the popup's list, matching the main
+    gallery's own tile aspect ratio
+  - A **solid** popup background rather than a glassy/blurred one, so it
+    stays readable over a busy chat log
+  - A sort menu inside the popup itself — Name (A–Z), Name (Z–A), Recently
+    created, Token count (highest first), or Token count (lowest first) —
+    independent of the main gallery's own sort
+  - **Off by default.** New toggle under Extensions → Persona Library
+    ("Quick persona switcher (chat bar)") turns it on; this is the only
+    thing Persona Library puts in the chat UI itself rather than the
+    Persona's tab or the Extensions panel, so it stays out of the way
+    unless you opt in
+  - Best-effort mount point (SillyTavern's chat-input icon row); falls back
+    to a small floating button if that row isn't found on your build/fork,
+    so the feature stays reachable rather than silently doing nothing
+
+### Fixed
+- Some scroll stutter/lag in the detail modal, most noticeable while
+  scrolling the Preview tab's own output box. The modal's wheel/touch
+  handler (added to stop scroll from leaking into the gallery grid behind
+  it) was walking up the DOM and calling `getComputedStyle()` on every
+  ancestor on every single wheel/touch event, forcing a synchronous browser
+  style recalculation before the scroll itself could even happen. Fixed
+  with a short-lived (50ms) per-node cache that collapses a burst of
+  same-target wheel/touch ticks into one real computation, without changing
+  the actual scroll-trap behavior at all. (A further attempt at a bigger,
+  CSS-based fix for the remaining stutter was tried and reverted after it
+  caused a worse scroll-freeze regression — the stutter itself is
+  unchanged from this fix, still present but reduced.)
 
 ## v1.6.3
 

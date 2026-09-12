@@ -111,6 +111,29 @@ only for a character you actually bind something to — never proactively.
 Chat bindings are unaffected by this setting either way; those live inside
 the chat's own metadata already, so they're reliable regardless.
 
+## Quick Switcher (chat bar, off by default)
+
+A small icon can be added next to the chat input for switching your active
+persona without opening the Persona's tab at all — modeled on SillyTavern's
+own [Extension-QuickPersona](https://github.com/SillyTavern/Extension-QuickPersona),
+restyled to match Persona Library:
+
+- Small full-resolution **rectangles**, not circular crops — same aspect
+  ratio as the main gallery's tiles
+- A **solid** popup background rather than a glassy/blurred one, so it stays
+  readable over a busy chat log
+- A sort menu inside the popup itself: Name (A–Z), Name (Z–A), Recently
+  created, or Token count — independent of the main gallery's own sort
+
+This is the one thing Persona Library puts in the chat UI itself rather than
+the Persona's tab or the Extensions panel, so it's **off by default**. Turn
+it on under **Extensions → Persona Library → Quick persona switcher (chat
+bar)**. If the icon doesn't show up next to your chat input after enabling
+it, it likely fell back to a small floating button in the bottom-right
+corner instead — see the comment above `MOUNT_CANDIDATES` in
+`modules/quick-switcher.js` for how to report the correct element so it can
+be pinned to the real chat-bar icon row on your build/fork.
+
 ## Installation
 
 **Option A — SillyTavern's built-in installer (recommended)**

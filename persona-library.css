@@ -196,6 +196,14 @@
     background: rgba(0, 0, 0, 0.72);
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
+    /* NOTE: 1.7.3 and 1.7.4 both tried CSS-only fixes for Preview-tab scroll
+       stutter here (will-change hints, then an isolated ::before backdrop
+       pseudo-element). Both made things WORSE in ways not caught before
+       shipping (a scroll freeze, then something worse still, per direct
+       report) — reverted back to this plain, boring version rather than
+       attempt a third live-untested guess at browser compositing behavior.
+       If this is revisited, it needs verifying against an actual running
+       instance before shipping, not reasoning about spec behavior alone. */
 }
 
 .pl-detail[hidden] {
@@ -1709,4 +1717,199 @@ body.pl-active.pl-native-override #persona-library-host {
    giving it. */
 body.pl-active #PersonaManagement {
     padding: 8px !important;
+}
+
+/* ---------- Quick Switcher (chat-bar persona picker, opt-in) ---------- */
+/* Lives OUTSIDE .pl-root on purpose — it's mounted straight into the chat
+   bar / document.body, not inside the Persona's tab, so it can't rely on
+   .pl-root's own --pl-* variables (that element may not exist yet, or ever,
+   this session). Its own small set of variables is declared here instead. */
+
+.pl-qs-button {
+    --pl-qs-text: var(--SmartThemeBodyColor, #e6e6e6);
+    position: relative;
+    /* Same sizing variable ST's own chat-bar icons use, so this button is
+       exactly consistent with its neighbors at any icon-size setting. */
+    width: var(--bottomFormBlockSize, 25px);
+    height: var(--bottomFormBlockSize, 25px);
+    /* This, not DOM position, is what puts the button at the END of the
+       icon row (i.e. after the wand) — same technique SillyTavern's own
+       Extension-QuickPersona uses for its #quickPersona button. The row is
+       a flex container; a high `order` value here beats any sibling that
+       doesn't set one (icons default to order: 0), regardless of where in
+       the DOM this element actually got appended. */
+    order: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    font-size: 1.06em;
+    color: var(--pl-qs-text);
+    opacity: 0.85;
+    cursor: pointer;
+    border-radius: 6px;
+}
+
+.pl-qs-button:hover,
+.pl-qs-button[aria-expanded="true"] {
+    opacity: 1;
+    background: var(--white10a, rgba(255, 255, 255, 0.1));
+}
+
+/* Generic fallback face — shown only when there's no active persona yet, or
+   its avatar fails to load. See updateButtonImage() in quick-switcher.js. */
+.pl-qs-button-icon {
+    display: flex;
+}
+
+/* The active persona's own avatar filling the button, per direct request —
+   same full-resolution-rectangle treatment as .pl-qs-thumb below, just
+   sized to the button instead of a fixed list-row size. Hidden by default;
+   updateButtonImage() toggles this vs. .pl-qs-button-icon above. */
+.pl-qs-button-avatar {
+    display: none;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center top;
+}
+
+/* Only used if none of quick-switcher.js's MOUNT_CANDIDATES were found —
+   keeps the feature reachable instead of silently doing nothing on an
+   unrecognized build/fork. See the comment above ensureFallbackButton(). */
+.pl-qs-button-floating {
+    position: fixed;
+    right: 16px;
+    bottom: 84px;
+    z-index: 99990;
+    width: 40px;
+    height: 40px;
+    border-radius: 999px;
+    background: var(--SmartThemeBlurTintColor, #1e1e1e);
+    border: 1px solid var(--pl-border, rgba(255, 255, 255, 0.14));
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+
+/* Round the avatar to match the floating pill's own circular shape, instead
+   of the sharper corners used when docked in the chat-bar icon row. */
+.pl-qs-button-floating .pl-qs-button-avatar {
+    border-radius: 999px;
+}
+
+.pl-qs-panel {
+    position: fixed;
+    z-index: 99997; /* below the detail modal's 99999 (see .pl-detail), above the rest of the chat UI */
+    width: min(340px, calc(100vw - 16px));
+    max-height: min(460px, calc(100vh - 32px));
+    display: flex;
+    flex-direction: column;
+    border-radius: 10px;
+    border: 1px solid var(--pl-border, rgba(255, 255, 255, 0.14));
+    box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+    color: var(--SmartThemeBodyColor, #e6e6e6);
+    /* "Solid" per direct request, as opposed to the glassy/blurred look a
+       lot of ST popups use \u2014 stacking the theme's own blur-tint color as a
+       gradient OVER a matching opaque fallback composites to a solid-looking
+       panel even when the active theme's blur-tint itself has some
+       transparency baked in, without touching that theme setting globally
+       (which would also affect every OTHER panel using it). No
+       backdrop-filter here either, unlike .pl-detail above \u2014 that's the
+       other half of "solid, not glassy." */
+    background-color: var(--pl-qs-fallback-bg, #1e1e1e);
+    background-image: linear-gradient(var(--SmartThemeBlurTintColor, #1e1e1e), var(--SmartThemeBlurTintColor, #1e1e1e));
+}
+
+.pl-qs-header {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 10px 8px;
+    border-bottom: 1px solid var(--pl-border, rgba(255, 255, 255, 0.14));
+}
+
+.pl-qs-title {
+    font-weight: 600;
+    font-size: 0.85em;
+    opacity: 0.85;
+    white-space: nowrap;
+}
+
+.pl-qs-sort {
+    margin-left: auto;
+    max-width: 60%;
+    font-size: 0.8em;
+}
+
+.pl-qs-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.pl-qs-empty {
+    padding: 16px 10px;
+    text-align: center;
+    font-size: 0.85em;
+    opacity: 0.6;
+}
+
+.pl-qs-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 6px 8px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.pl-qs-row:hover {
+    background: var(--white10a, rgba(255, 255, 255, 0.1));
+}
+
+.pl-qs-row.pl-qs-active {
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #6ea8fe) 16%, transparent);
+}
+
+/* Full-resolution RECTANGLE, not a circular crop — same aspect ratio as the
+   main gallery's own .pl-tile, just sized to sit inline in a list row
+   instead of a grid cell. object-fit: cover on the persona's real avatar
+   file, so this is never a separately-downscaled thumbnail. Sized up from
+   an earlier 30x45 per direct request — big enough to actually recognize a
+   face/character at a glance while picking, not just a tiny swatch. */
+.pl-qs-thumb {
+    flex: 0 0 auto;
+    width: 48px;
+    height: 72px;
+    border-radius: 6px;
+    object-fit: cover;
+    object-position: center top;
+    background: var(--pl-surface-2, rgba(255, 255, 255, 0.05));
+}
+
+.pl-qs-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.95em;
+}
+
+.pl-qs-check {
+    flex: 0 0 auto;
+    color: var(--SmartThemeQuoteColor, #6ea8fe);
+    font-size: 0.85em;
 }

@@ -7,8 +7,9 @@
  * separate from the per-persona Variants editor — it's an install-wide
  * behavior choice, not something to bury per-character.
  */
-import { getSettings, saveSettings } from './st-adapter.js';
+import { getSettings, saveSettings, stAdapter } from './st-adapter.js';
 import { CHANGELOG } from './changelog.js';
+import { mountQuickSwitcher, unmountQuickSwitcher } from './quick-switcher.js';
 
 const PANEL_ID = 'persona-library-settings-panel';
 
@@ -58,12 +59,35 @@ export function mountSettingsPanel() {
                     </small>
                 </span>
             </label>
+            <label class="checkbox_label" for="pl-quick-switcher-enabled" style="align-items:flex-start; gap:8px; margin-top:10px;">
+                <input id="pl-quick-switcher-enabled" type="checkbox" />
+                <span>
+                    <b>Quick persona switcher (chat bar)</b>
+                    <br/>
+                    <small>
+                        Adds a small icon next to the chat input for switching personas without opening the
+                        Persona's tab \u2014 modeled on SillyTavern's own QuickPersona extension, styled to match
+                        Persona Library (solid background, rectangular preview images, and a sort menu for
+                        Name A\u2013Z/Z\u2013A, Recently created, or Token count). <b>Off by default</b> \u2014 this is the
+                        only thing Persona Library puts in the chat UI itself rather than the Persona's tab, so it
+                        only shows up if you turn it on here.
+                    </small>
+                </span>
+            </label>
         </div>`;
 
     const checkbox = drawer.querySelector('#pl-reliable-character-bindings');
     checkbox.checked = !!settings.reliableCharacterBindings;
     checkbox.addEventListener('change', () => {
         saveSettings({ reliableCharacterBindings: checkbox.checked });
+    });
+
+    const quickSwitcherCheckbox = drawer.querySelector('#pl-quick-switcher-enabled');
+    quickSwitcherCheckbox.checked = !!settings.quickSwitcherEnabled;
+    quickSwitcherCheckbox.addEventListener('change', () => {
+        saveSettings({ quickSwitcherEnabled: quickSwitcherCheckbox.checked });
+        if (quickSwitcherCheckbox.checked) mountQuickSwitcher(stAdapter);
+        else unmountQuickSwitcher();
     });
 
     drawer.querySelector('.inline-drawer-content').appendChild(buildChangelogSection(settings));
@@ -122,6 +146,7 @@ function buildChangelogSection(settings) {
                 ${i === 0 ? '<small style="opacity:0.6;"> (current)</small>' : ''}
             </div>
             ${listHtml('Added', entry.added)}
+            ${listHtml('Changed', entry.changed)}
             ${listHtml('Fixed', entry.fixed)}
             ${listHtml('Removed', entry.removed)}
             ${entry.note ? `<small style="opacity:0.75; display:block;">${escapeHtml(entry.note)}</small>` : ''}

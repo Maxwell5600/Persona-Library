@@ -24,7 +24,19 @@ const SECTIONS_KEY = 'personaLibrarySections';
 const VARIANTS_KEY = 'personaLibraryVariants';
 const CHAR_BINDING_FIELD = 'personaLibraryBindingId';
 const CHAT_BINDING_KEY = 'personaLibraryBindingId';
-const DEFAULTS = { sort: 'name', tile: 150, query: '', reliableCharacterBindings: false, lastSeenChangelogVersion: '' };
+const DEFAULTS = {
+    sort: 'name', tile: 150, query: '', reliableCharacterBindings: false, lastSeenChangelogVersion: '',
+    // Quick Switcher (see modules/quick-switcher.js): a small persona picker
+    // mounted next to the chat input bar, independent of the main gallery
+    // being open. Off by default — this is the one thing Persona Library
+    // puts somewhere OTHER than the Persona's tab or the Extensions panel,
+    // so it defaults to not touching the chat UI unless explicitly opted in.
+    quickSwitcherEnabled: false,
+    // Sort order for the Quick Switcher's OWN list — deliberately a separate
+    // key from `sort` above (the main gallery's sort) so picking a different
+    // order in one doesn't silently change the other.
+    quickSwitcherSort: 'name',
+};
 
 export const ctx = () => globalThis.SillyTavern?.getContext?.() ?? null;
 
@@ -1026,6 +1038,16 @@ export const stAdapter = {
     createPersona,
     confirm: confirmDialog,
     promptText,
+    // Exposed directly (not just via getPersonas()' per-item `image` field)
+    // so callers can resolve an avatar URL straight from a raw active-avatar
+    // id, the same way SillyTavern's own Extension-QuickPersona always
+    // derives its button's image from the live `user_avatar` id itself,
+    // independent of whether that avatar has been "named" as a persona.
+    // getPersonas() only enumerates power_user.personas (NAMED personas) —
+    // the active avatar frequently isn't in there at all for most users, so
+    // anything keying off "found in getPersonas()" to decide whether to
+    // show an image (quick-switcher.js used to) silently fails for them.
+    avatarUrl,
     fallbackImage: avatarThumbFallback,
     getPersonaSections,
     savePersonaSections,
