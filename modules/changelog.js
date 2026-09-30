@@ -16,6 +16,13 @@
  */
 export const CHANGELOG = [
     {
+        version: '1.8.0',
+        added: [
+            'Persona image Gallery: a new Gallery tab (after Preview) holds a set of swappable portraits per persona. Add several images at once, click one to make it the persona\u2019s portrait, enlarge or remove any of them. Two new buttons on either side of the persona arrows under the portrait (\u00AB \u00BB) step through that persona\u2019s gallery images; the inner \u2039 \u203A still switch personas.',
+            'Safe by design: gallery images live in SillyTavern\u2019s user images folder (never User Avatars), so they can\u2019t show up as extra personas. The persona\u2019s own avatar file is never renamed or deleted \u2014 swapping overwrites it in place with a copy of the chosen image, and every gallery entry is an independent copy. The current portrait is saved into the gallery automatically the first time it\u2019s used. Duplicating a persona copies its gallery files; deleting a persona deletes its own gallery files.',
+        ],
+    },
+    {
         version: '1.7.2',
         fixed: [
             'Found the actual cause of the Preview tab\u2019s scroll freeze (mouse wheel getting "stuck" until you grab the scrollbar by hand), after two earlier compositing-based attempts made things worse and were reverted. Root cause: .pl-preview-output (the output box, nested INSIDE the already-scrollable .pl-preview-view panel) had overscroll-behavior: contain set on it \u2014 the same boilerplate every OUTERMOST scroll container in this modal uses to stop leaking into the gallery grid behind it, accidentally applied to a nested box instead. That property\u2019s job is to stop scroll handing off to the parent once the box hits its own edge, so scrolling past the end of the output text just did nothing. The Edit tab\u2019s textarea fields are nested the same way but never had this set, which is why only Preview was affected. Removed from .pl-preview-output only; .pl-preview-view keeps its own overscroll-behavior: contain, the correct layer for it.',

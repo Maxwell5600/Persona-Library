@@ -1929,3 +1929,114 @@ body.pl-active #PersonaManagement {
     color: var(--SmartThemeQuoteColor, #6ea8fe);
     font-size: 0.85em;
 }
+
+
+/* -- Persona image gallery (Gallery tab + « » hero buttons) -- */
+.pl-hero-gal-btn {
+    font-size: 0.85em;
+}
+
+.pl-gallery-view {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 4px 2px 12px;
+}
+
+.pl-gal-toolbar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.pl-gal-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    gap: 8px;
+}
+
+.pl-gal-tile {
+    position: relative;
+    aspect-ratio: 2 / 3;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 2px solid var(--pl-border);
+    background: var(--pl-surface-2);
+}
+
+.pl-gal-tile.pl-gal-current {
+    border-color: var(--pl-accent);
+}
+
+.pl-gal-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    cursor: pointer;
+}
+
+.pl-gal-tile.pl-gal-current .pl-gal-img {
+    cursor: default;
+}
+
+.pl-gal-tile.pl-gal-missing .pl-gal-img {
+    opacity: 0.25;
+}
+
+.pl-gal-badge {
+    position: absolute;
+    left: 6px;
+    bottom: 6px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--pl-accent);
+    color: #000;
+    font-size: 0.65em;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    pointer-events: none;
+}
+
+.pl-gal-actions {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.12s;
+}
+
+.pl-gal-tile:hover .pl-gal-actions,
+.pl-gal-tile:focus-within .pl-gal-actions {
+    opacity: 1;
+}
+
+/* Touch devices have no hover — keep the buttons reachable. */
+@media (hover: none) {
+    .pl-gal-actions { opacity: 1; }
+}
+
+.pl-gal-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    border: 1px solid var(--pl-border);
+    background: color-mix(in srgb, #000 65%, transparent);
+    color: #fff;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75em;
+}
+
+.pl-gal-btn:hover {
+    background: color-mix(in srgb, var(--pl-accent) 45%, #000);
+}
+
+.pl-gal-btn.pl-gal-del:hover {
+    background: #e5484d;
+    border-color: #e5484d;
+}

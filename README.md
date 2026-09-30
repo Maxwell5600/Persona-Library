@@ -134,6 +134,24 @@ corner instead — see the comment above `MOUNT_CANDIDATES` in
 `modules/quick-switcher.js` for how to report the correct element so it can
 be pinned to the real chat-bar icon row on your build/fork.
 
+## Persona Image Gallery
+
+Every persona can have its own set of swappable portraits.
+
+- **Gallery tab** (after Preview): add several images at once, click an image
+  to make it the persona's portrait, enlarge or remove images.
+- **`«` `»` buttons** on either side of the persona arrows under the portrait
+  step through that persona's gallery images. The inner `‹` `›` still switch
+  personas.
+- Images are stored in SillyTavern's user images folder
+  (`data/<user>/user/images/pl-gallery_<persona>/`), never in User Avatars, so
+  they can't show up as extra personas. The persona's own avatar file is only
+  ever overwritten in place; every gallery image is an independent copy.
+- Duplicating a persona copies its gallery; deleting a persona deletes its
+  gallery files. Removing a gallery image never touches the persona.
+- Swapping re-saves the image through SillyTavern's avatar upload, so animated
+  GIFs become still images as the portrait (the gallery copy stays animated).
+
 ## Installation
 
 **Option A — SillyTavern's built-in installer (recommended)**

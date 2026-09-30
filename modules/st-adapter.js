@@ -22,6 +22,7 @@ import { composeVariants, normalizeVariants, defaultVariants } from './variants.
 const SETTINGS_KEY = 'personaLibrary';
 const SECTIONS_KEY = 'personaLibrarySections';
 const VARIANTS_KEY = 'personaLibraryVariants';
+const GALLERY_KEY = 'personaLibraryGallery';
 const CHAR_BINDING_FIELD = 'personaLibraryBindingId';
 const CHAT_BINDING_KEY = 'personaLibraryBindingId';
 const DEFAULTS = {
@@ -833,6 +834,283 @@ export async function replaceAvatar(id, file) {
     refreshNativePersonaList(id);
 }
 
+
+/*
+ * Persona Image Gallery.
+ *
+ * Safety model (this is what avoids duplicate / deleted-persona bugs):
+ *  - Gallery images are stored in SillyTavern's user IMAGES folder
+ *    (user/images/<folder>/…), the same place character galleries live —
+ *    NEVER in "User Avatars". The native persona list is built from that
+ *    folder, so nothing here can ever appear as an extra/ghost persona.
+ *  - The persona's own avatar file (its id) is never renamed, moved or
+ *    deleted by any gallery operation. "Swapping" copies a gallery image
+ *    OVER that same file via replaceAvatar() (overwrite by name).
+ *  - Every gallery entry is its own independent copy, so overwriting the
+ *    avatar can't lose an image, and deleting a gallery entry can't touch
+ *    the avatar.
+ *  - Only paths returned by the server's own upload are ever recorded, and
+ *    only paths recorded here are ever deleted. We never list-and-sync a
+ *    folder, so we can't "discover" (or delete) files we didn't create.
+ *  - All mutating operations for a persona run one at a time through a
+ *    queue, so rapid clicks can't double-seed, double-upload or interleave
+ *    with a half-finished swap.
+ *
+ * Record shape (extensionSettings[GALLERY_KEY][personaId]):
+ *   { folder, currentKey: string|null, images: [{ key, path, name }] }
+ */
+const GALLERY_FORMATS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'avif'];
+const galleryQueues = {};
+
+function galleryStore() {
+    const c = ctx();
+    if (!c?.extensionSettings) return {};
+    c.extensionSettings[GALLERY_KEY] = c.extensionSettings[GALLERY_KEY] ?? {};
+    return c.extensionSettings[GALLERY_KEY];
+}
+
+function galleryEnqueue(id, fn) {
+    const prev = galleryQueues[id] ?? Promise.resolve();
+    const next = prev.catch(() => {}).then(fn);
+    galleryQueues[id] = next;
+    const clear = () => { if (galleryQueues[id] === next) delete galleryQueues[id]; };
+    next.then(clear, clear);
+    return next;
+}
+
+function galleryFolderFor(id) {
+    const base = String(id).replace(/\.[^.]+$/, '').replace(/[^\w.-]/g, '_').replace(/^\.+|\.+$/g, '').slice(0, 80) || 'persona';
+    return `pl-gallery_${base}`;
+}
+
+function galleryUrl(path) {
+    return '/' + String(path).replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
+}
+
+function galleryUid() {
+    return globalThis.crypto?.randomUUID?.() ?? `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function viewOfRecord(rec) {
+    if (!rec) return null;
+    return {
+        currentKey: rec.currentKey ?? null,
+        images: (rec.images ?? []).map((im) => ({ key: im.key, name: im.name, path: im.path, url: galleryUrl(im.path) })),
+    };
+}
+
+function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result).split(',')[1] ?? '');
+        r.onerror = () => reject(new Error('Could not read the image'));
+        r.readAsDataURL(blob);
+    });
+}
+
+function extFromBlob(blob, name = '') {
+    const fromType = (blob.type || '').split('/')[1]?.split('+')[0]?.toLowerCase();
+    const fromName = (name.match(/\.([a-z0-9]+)$/i)?.[1] ?? '').toLowerCase();
+    const ext = [fromType, fromName].find((e) => e && GALLERY_FORMATS.includes(e));
+    return ext === 'jpeg' ? 'jpg' : ext ?? null;
+}
+
+async function toPngBlob(blob) {
+    const bmp = await createImageBitmap(blob);
+    const canvas = document.createElement('canvas');
+    canvas.width = bmp.width; canvas.height = bmp.height;
+    canvas.getContext('2d').drawImage(bmp, 0, 0);
+    return await new Promise((res, rej) => canvas.toBlob((b) => (b ? res(b) : rej(new Error('Could not convert the image'))), 'image/png'));
+}
+
+/** Uploads one image blob into a persona gallery folder; returns the server path. */
+async function galleryUploadBlob(folder, blob, displayName) {
+    let out = blob;
+    let ext = extFromBlob(blob, displayName);
+    if (!ext) { out = await toPngBlob(blob); ext = 'png'; }
+    const res = await fetch('/api/images/upload', {
+        method: 'POST',
+        headers: await headers(true),
+        cache: 'no-cache',
+        body: JSON.stringify({
+            image: await blobToBase64(out),
+            format: ext,
+            filename: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            ch_name: folder,
+        }),
+    });
+    if (!res.ok) throw new Error(`Gallery upload failed: ${res.status}`);
+    const path = (await res.json())?.path;
+    if (!path) throw new Error('Gallery upload returned no path');
+    return path;
+}
+
+async function galleryDeletePath(path) {
+    try {
+        const res = await fetch('/api/images/delete', {
+            method: 'POST',
+            headers: await headers(true),
+            body: JSON.stringify({ path }),
+        });
+        return res.ok || res.status === 404; // already gone is fine
+    } catch { return false; }
+}
+
+async function fetchAvatarBlob(id) {
+    const res = await fetch(`/User Avatars/${encodeURIComponent(id)}`, { cache: 'no-cache' });
+    if (!res.ok) throw new Error(`Could not read the current portrait: ${res.status}`);
+    return await res.blob();
+}
+
+/** Synchronous, read-only snapshot for rendering. null = no gallery yet. */
+export function getPersonaGalleryImages(id) {
+    return viewOfRecord(galleryStore()[id]);
+}
+
+/** Creates the gallery (seeded with the CURRENT portrait) if it doesn't exist. Runs inside the queue. */
+async function ensureGalleryInner(id) {
+    const store = galleryStore();
+    if (store[id]) return store[id];
+    const folder = galleryFolderFor(id);
+    const blob = await fetchAvatarBlob(id);
+    const path = await galleryUploadBlob(folder, blob, id);
+    const key = galleryUid();
+    // Re-check: nothing else can have created it (we're in the queue), but be strict.
+    if (store[id]) return store[id];
+    store[id] = { folder, currentKey: key, images: [{ key, path, name: 'Original portrait' }] };
+    ctx()?.saveSettingsDebounced?.();
+    return store[id];
+}
+
+export function ensurePersonaGallery(id) {
+    return galleryEnqueue(id, async () => viewOfRecord(await ensureGalleryInner(id)));
+}
+
+export function addPersonaGalleryImages(id, files, { markLastCurrent = false } = {}) {
+    return galleryEnqueue(id, async () => {
+        const list = Array.from(files ?? []).filter((f) => f && (f.type || '').startsWith('image/'));
+        if (!list.length) throw new Error('No image files selected');
+        const rec = await ensureGalleryInner(id);
+        let added = 0;
+        let firstError = null;
+        for (const file of list) {
+            try {
+                const path = await galleryUploadBlob(rec.folder, file, file.name);
+                rec.images.push({ key: galleryUid(), path, name: file.name.replace(/\.[^.]+$/, '') || 'Image' });
+                added++;
+            } catch (e) {
+                console.error('[PersonaLibrary] gallery upload failed', e);
+                firstError = firstError ?? e;
+            }
+        }
+        // Used when the file just became the portrait through another path
+        // (Change portrait): record it as current WITHOUT writing the avatar again.
+        if (markLastCurrent && added) rec.currentKey = rec.images[rec.images.length - 1].key;
+        ctx()?.saveSettingsDebounced?.();
+        if (!added && firstError) throw firstError;
+        return { added, failed: list.length - added, gallery: viewOfRecord(rec) };
+    });
+}
+
+/** Copy a gallery image over the persona's avatar and mark it current. */
+async function applyGalleryImage(id, rec, entry) {
+    const res = await fetch(galleryUrl(entry.path), { cache: 'no-cache' });
+    if (!res.ok) throw new Error('That gallery image file is missing on the server.');
+    const blob = await res.blob();
+    const file = new File([blob], id, { type: blob.type || 'image/png' });
+    // Mark current BEFORE the avatar write: replaceAvatar() notifies the UI,
+    // which re-renders immediately and reads this record. Roll back on failure.
+    const prev = rec.currentKey;
+    rec.currentKey = entry.key;
+    try {
+        await replaceAvatar(id, file);
+    } catch (e) {
+        rec.currentKey = prev;
+        throw e;
+    }
+    ctx()?.saveSettingsDebounced?.();
+}
+
+export function setPersonaGalleryCurrent(id, key) {
+    return galleryEnqueue(id, async () => {
+        const rec = galleryStore()[id];
+        const entry = rec?.images.find((im) => im.key === key);
+        if (!entry) throw new Error('Gallery image not found');
+        if (rec.currentKey === key) return viewOfRecord(rec);
+        await applyGalleryImage(id, rec, entry);
+        return viewOfRecord(rec);
+    });
+}
+
+/** delta = +1 / -1: move to the next / previous gallery image (wraps). */
+export function stepPersonaGallery(id, delta) {
+    return galleryEnqueue(id, async () => {
+        const rec = await ensureGalleryInner(id);
+        const n = rec.images.length;
+        if (n < 2) return { gallery: viewOfRecord(rec), moved: false };
+        const idx = rec.images.findIndex((im) => im.key === rec.currentKey);
+        const nextIdx = idx < 0 ? (delta > 0 ? 0 : n - 1) : (idx + delta + n) % n;
+        await applyGalleryImage(id, rec, rec.images[nextIdx]);
+        return { gallery: viewOfRecord(rec), moved: true };
+    });
+}
+
+/**
+ * Removes ONE gallery entry (its own copy only). The persona's avatar file
+ * is never touched — if the removed image was current, the portrait simply
+ * stays as it is and no entry is marked current.
+ */
+export function removePersonaGalleryImage(id, key) {
+    return galleryEnqueue(id, async () => {
+        const rec = galleryStore()[id];
+        const idx = rec?.images.findIndex((im) => im.key === key) ?? -1;
+        if (idx < 0) return viewOfRecord(rec);
+        const [entry] = rec.images.splice(idx, 1);
+        if (rec.currentKey === key) rec.currentKey = null;
+        ctx()?.saveSettingsDebounced?.();
+        await galleryDeletePath(entry.path);
+        return viewOfRecord(rec);
+    });
+}
+
+/** Deletes a persona's whole gallery (used when the persona itself is deleted). */
+export function deletePersonaGallery(id) {
+    return galleryEnqueue(id, async () => {
+        const store = galleryStore();
+        const rec = store[id];
+        if (!rec) return;
+        delete store[id];
+        ctx()?.saveSettingsDebounced?.();
+        for (const im of rec.images) await galleryDeletePath(im.path);
+    });
+}
+
+/** Copies (not shares) a gallery to a new persona id — used by Duplicate. */
+async function copyPersonaGallery(fromId, toId) {
+    return galleryEnqueue(fromId, async () => {
+        const store = galleryStore();
+        const src = store[fromId];
+        if (!src || store[toId]) return;
+        const folder = galleryFolderFor(toId);
+        const images = [];
+        let currentKey = null;
+        for (const im of src.images) {
+            try {
+                const res = await fetch(galleryUrl(im.path), { cache: 'no-cache' });
+                if (!res.ok) continue;
+                const path = await galleryUploadBlob(folder, await res.blob(), im.name);
+                const key = galleryUid();
+                images.push({ key, path, name: im.name });
+                if (im.key === src.currentKey) currentKey = key;
+            } catch (e) { console.warn('[PersonaLibrary] could not copy a gallery image', e); }
+        }
+        if (images.length) {
+            store[toId] = { folder, currentKey, images };
+            ctx()?.saveSettingsDebounced?.();
+        }
+    });
+}
+
 export async function duplicatePersona(id) {
     const pu = powerUser();
     const blob = await (await fetch(`/User Avatars/${encodeURIComponent(id)}`)).blob();
@@ -852,6 +1130,10 @@ export async function duplicatePersona(id) {
     pu.persona_descriptions = pu.persona_descriptions ?? {};
     pu.persona_descriptions[savedName] = { ...(pu.persona_descriptions[id] ?? {}), date_added: Date.now() };
     ctx()?.saveSettingsDebounced?.();
+    // Copy the gallery too (independent files, never shared references), so
+    // deleting either persona later can't break the other's images. A failure
+    // here must never undo or block the duplicate itself.
+    try { await copyPersonaGallery(id, savedName); } catch (e) { console.warn('[PersonaLibrary] gallery copy failed', e); }
     notifyPersonaUpdated(savedName);
     refreshNativePersonaList(savedName);
 }
@@ -1035,6 +1317,13 @@ export const stAdapter = {
     replaceAvatar,
     duplicatePersona,
     deletePersona,
+    getPersonaGalleryImages,
+    ensurePersonaGallery,
+    addPersonaGalleryImages,
+    setPersonaGalleryCurrent,
+    stepPersonaGallery,
+    removePersonaGalleryImage,
+    deletePersonaGallery,
     createPersona,
     confirm: confirmDialog,
     promptText,

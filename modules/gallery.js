@@ -1165,6 +1165,107 @@ export function createPersonaLibrary(container, adapter) {
         return wrap;
     }
 
+    // -- Persona image gallery ------------------------------------------
+    // One action at a time across the whole UI (tiles AND the « » hero
+    // buttons), so rapid clicks can never overlap two avatar writes.
+    let galleryBusy = false;
+
+    /**
+     * @param {() => Promise<any>} fn
+     * @param {{ ok?: string, fail?: string, changesAvatar?: boolean }} opts
+     * changesAvatar: the action rewrites the persona's portrait, which
+     * re-renders the detail view — refuse while there are unsaved edits so
+     * they can't be silently wiped by that re-render.
+     */
+    async function galleryAction(fn, { ok, fail = 'Gallery action failed.', changesAvatar = false } = {}) {
+        if (galleryBusy) return false;
+        if (changesAvatar && dirty) {
+            globalThis.toastr?.warning?.('You have unsaved edits \u2014 save them (Edit tab) before changing the image.', 'Persona Library');
+            return false;
+        }
+        galleryBusy = true;
+        let success = false;
+        try {
+            await fn();
+            success = true;
+            if (ok) globalThis.toastr?.success?.(ok, 'Persona Library');
+        } catch (e) {
+            console.error('[PersonaLibrary] gallery', e);
+            globalThis.toastr?.error?.(`${fail} ${e?.message ?? ''}`.trim(), 'Persona Library');
+        } finally {
+            galleryBusy = false;
+        }
+        return success;
+    }
+
+    /** "Gallery" tab: per-persona image set; click a tile to make it the portrait. */
+    function buildGalleryView(p) {
+        const wrap = el('div', { class: 'pl-gallery-view' });
+        const fileInput = el('input', { type: 'file', accept: 'image/*', multiple: true, style: 'display:none' });
+        const addBtn = el('button', { class: 'pl-btn pl-primary', type: 'button', text: '+ Add images' });
+        addBtn.onclick = () => fileInput.click();
+        const hint = el('div', {
+            class: 'pl-sections-hint',
+            text: 'Click an image to make it this persona\u2019s portrait. The \u00AB \u00BB buttons under the portrait step through this set. Removing an image here never changes or deletes the persona itself.',
+        });
+        const grid = el('div', { class: 'pl-gal-grid' });
+        wrap.append(el('div', { class: 'pl-gal-toolbar' }, [addBtn]), hint, grid, fileInput);
+
+        function render() {
+            const g = adapter.getPersonaGalleryImages(p.id);
+            grid.replaceChildren();
+            if (!g || !g.images.length) {
+                grid.append(el('div', { class: 'pl-details-empty', text: 'No gallery images yet \u2014 add some. Your current portrait is saved into the gallery automatically the first time.' }));
+                return;
+            }
+            for (const im of g.images) {
+                const isCurrent = im.key === g.currentKey;
+                const img = el('img', { class: 'pl-gal-img', src: im.url, alt: im.name, loading: 'lazy', title: isCurrent ? 'Current portrait' : 'Use as portrait' });
+                img.addEventListener('error', () => { tile.classList.add('pl-gal-missing'); img.title = 'File missing on the server'; }, { once: true });
+                img.addEventListener('click', () => {
+                    if (isCurrent) return;
+                    galleryAction(() => adapter.setPersonaGalleryCurrent(p.id, im.key), { fail: 'Could not switch the image.', changesAvatar: true })
+                        .then((okd) => { if (okd && !dirty) renderDetail(); });
+                });
+                const zoom = el('button', { class: 'pl-gal-btn', type: 'button', title: 'Enlarge', onclick: (e) => { e.stopPropagation(); openLightbox(im.url, im.name); } },
+                    [el('i', { class: 'fa-solid fa-magnifying-glass-plus' })]);
+                const del = el('button', {
+                    class: 'pl-gal-btn pl-gal-del', type: 'button', title: 'Remove from gallery',
+                    onclick: async (e) => {
+                        e.stopPropagation();
+                        if (galleryBusy) return;
+                        const ask = adapter.confirm ?? (async (m) => window.confirm(m));
+                        if (!await ask('Remove this image from the gallery? The persona itself is not affected.')) return;
+                        await galleryAction(() => adapter.removePersonaGalleryImage(p.id, im.key), { fail: 'Could not remove the image.' });
+                        render();
+                    },
+                }, [el('i', { class: 'fa-solid fa-trash' })]);
+                const tile = el('div', { class: `pl-gal-tile${isCurrent ? ' pl-gal-current' : ''}` }, [
+                    img,
+                    isCurrent ? el('span', { class: 'pl-gal-badge', text: 'CURRENT' }) : null,
+                    el('div', { class: 'pl-gal-actions' }, [zoom, del]),
+                ].filter(Boolean));
+                grid.append(tile);
+            }
+        }
+
+        fileInput.onchange = async () => {
+            const files = Array.from(fileInput.files ?? []);
+            fileInput.value = '';
+            if (!files.length) return;
+            addBtn.disabled = true;
+            const done = await galleryAction(async () => {
+                const r = await adapter.addPersonaGalleryImages(p.id, files);
+                if (r?.failed) globalThis.toastr?.warning?.(`${r.failed} image(s) failed to upload.`, 'Persona Library');
+            }, { ok: 'Added to gallery.', fail: 'Could not add images.' });
+            addBtn.disabled = false;
+            if (done !== undefined) render();
+        };
+
+        render();
+        return wrap;
+    }
+
     /**
      * Read-only "Details" tab — mirrors CharLib's own detail modal: a small
      * metadata line, tag chips, then each part of the description (core +
@@ -1440,7 +1541,19 @@ export function createPersonaLibrary(container, adapter) {
             onchange: async () => {
                 const file = fileInput.files?.[0];
                 if (!file) return;
-                await run(() => adapter.replaceAvatar(p.id, file), 'Image replaced.', 'Could not replace the image.');
+                await run(async () => {
+                    // If this persona already has a gallery, the new portrait
+                    // becomes a gallery entry too (so it isn't lost to the next
+                    // swap). No gallery yet -> nothing to sync; it's seeded from
+                    // whatever the portrait is when the gallery is first used.
+                    const hasGallery = !!adapter.getPersonaGalleryImages?.(p.id);
+                    await adapter.replaceAvatar(p.id, file);
+                    if (hasGallery) {
+                        try {
+                            await adapter.addPersonaGalleryImages(p.id, [file], { markLastCurrent: true });
+                        } catch (e) { console.warn('[PersonaLibrary] could not add the new portrait to the gallery', e); }
+                    }
+                }, 'Image replaced.', 'Could not replace the image.');
             },
         });
 
@@ -1587,9 +1700,15 @@ export function createPersonaLibrary(container, adapter) {
             adapter.duplicatePersona && iconBtn('fa-clone', 'Duplicate', () => run(() => adapter.duplicatePersona(p.id), 'Duplicated.', 'Could not duplicate.')),
             adapter.deletePersona && iconBtn('fa-trash', 'Delete', async () => {
                 const ask = adapter.confirm ?? (async (m) => window.confirm(m));
-                if (!await ask(`Delete persona "${p.name}"? This cannot be undone.`)) return;
+                const galCount = adapter.getPersonaGalleryImages?.(p.id)?.images?.length ?? 0;
+                const galNote = galCount ? ` Its ${galCount} gallery image${galCount === 1 ? '' : 's'} will be deleted too.` : '';
+                if (!await ask(`Delete persona "${p.name}"?${galNote} This cannot be undone.`)) return;
                 selectedId = null;
-                await run(() => adapter.deletePersona(p.id), 'Deleted.', 'Could not delete.');
+                await run(async () => {
+                    await adapter.deletePersona(p.id);
+                    // Only after the persona itself is gone; failure here is harmless.
+                    try { await adapter.deletePersonaGallery?.(p.id); } catch (e) { console.warn('[PersonaLibrary] gallery cleanup failed', e); }
+                }, 'Deleted.', 'Could not delete.');
             }, 'pl-icon-danger'),
             canEdit && detailTab === 'edit' && el('button', {
                 class: 'pl-btn pl-primary', type: 'button', text: 'Save',
@@ -1644,6 +1763,11 @@ export function createPersonaLibrary(container, adapter) {
                 title: 'Exactly what gets folded into the prompt the AI receives',
                 onclick: () => { detailTab = 'preview'; renderDetail(); },
             }),
+            adapter.getPersonaGalleryImages && el('button', {
+                class: `pl-detail-tab${detailTab === 'gallery' ? ' active' : ''}`, type: 'button', text: 'Gallery',
+                title: 'This persona\u2019s set of swappable portraits',
+                onclick: () => { detailTab = 'gallery'; renderDetail(); },
+            }),
         ].filter(Boolean));
 
         const connections = (p.connections ?? []).filter(Boolean);
@@ -1670,7 +1794,9 @@ export function createPersonaLibrary(container, adapter) {
             ? editFields
             : detailTab === 'preview'
                 ? buildPreviewView(p, sectionsDraft, variantsDraft, adapter)
-                : buildDetailsView(p, connections);
+                : (detailTab === 'gallery' && adapter.getPersonaGalleryImages)
+                    ? buildGalleryView(p)
+                    : buildDetailsView(p, connections);
 
         const heroImg = personaImg({ class: 'pl-detail-hero', alt: p.name, src: p.image, title: 'Click to enlarge' }, p.id, adapter);
         heroImg.addEventListener('click', () => openLightbox(heroImg.src, p.name));
@@ -1704,7 +1830,25 @@ export function createPersonaLibrary(container, adapter) {
         // exactly?" question — see the old comment this replaced) since
         // the bar just sits in normal flex flow under the image, not
         // absolutely positioned against anything.
-        const navBar = (canNav || changePortraitBtn) && el('div', { class: 'pl-hero-nav-bar' }, [navPrev, changePortraitBtn, navNext].filter(Boolean));
+        // « » step through THIS persona's gallery images (‹ › above still
+        // switch personas). Outermost on each side.
+        const canGallery = typeof adapter.stepPersonaGallery === 'function';
+        const galleryStepBtn = (delta) => el('button', {
+            class: 'pl-hero-nav-btn pl-hero-gal-btn', type: 'button',
+            title: delta < 0 ? 'Previous gallery image' : 'Next gallery image',
+            onclick: async () => {
+                let moved = true;
+                const okd = await galleryAction(async () => {
+                    const r = await adapter.stepPersonaGallery(p.id, delta);
+                    moved = r?.moved !== false;
+                }, { fail: 'Could not switch the image.', changesAvatar: true });
+                if (okd && !moved) globalThis.toastr?.info?.('Add more images in the Gallery tab first.', 'Persona Library');
+                if (okd && !dirty) renderDetail();
+            },
+        }, [el('i', { class: `fa-solid ${delta < 0 ? 'fa-angles-left' : 'fa-angles-right'}` })]);
+        const navBar = (canNav || changePortraitBtn || canGallery) && el('div', { class: 'pl-hero-nav-bar' }, [
+            canGallery && galleryStepBtn(-1), navPrev, changePortraitBtn, navNext, canGallery && galleryStepBtn(1),
+        ].filter(Boolean));
 
         const heroWrap = el('div', { class: 'pl-detail-hero-wrap' }, [heroImgArea, navBar].filter(Boolean));
 

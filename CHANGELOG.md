@@ -9,6 +9,22 @@ nothing parses one from the other on purpose, so both stay simple and
 independently correct. If you add an entry to one, add the matching one to
 the other.
 
+## v1.8.0
+
+### Added
+- **Persona image Gallery.** New **Gallery** tab (after Preview) with a set of
+  swappable portraits per persona: add several images at once, click one to
+  make it the portrait, enlarge or remove any. New `«` `»` buttons on either
+  side of the persona arrows under the portrait step through that persona's
+  gallery images (the inner `‹` `›` still switch personas).
+- Gallery images are stored in SillyTavern's user images folder, never in
+  User Avatars, so they can't appear as extra personas. The persona's avatar
+  file is never renamed or deleted: swapping overwrites it in place with a
+  copy of the chosen image; every gallery entry is an independent copy. The
+  current portrait is auto-saved into the gallery the first time it's used.
+  Duplicating a persona copies its gallery files; deleting a persona deletes
+  its own gallery files.
+
 ## v1.7.2
 
 ### Fixed
