@@ -1631,6 +1631,15 @@
         flex: 0 0 auto;
     }
 
+    /* overflow-x: hidden (base rule) forces overflow-y: visible to compute
+       to auto, leaving this as a nested scroller that eats drags. clip
+       clips without creating a scroll container. */
+    .pl-detail-fields {
+        overflow-x: clip;
+        overflow-y: visible;
+        overscroll-behavior: auto;
+    }
+
     /* Nav arrows are no longer overlaid on the image at all (see
        .pl-hero-nav-bar) — they're a normal in-flow bar under the photo now,
        so there's nothing layout-specific left to override here. */
