@@ -9,6 +9,76 @@ nothing parses one from the other on purpose, so both stay simple and
 independently correct. If you add an entry to one, add the matching one to
 the other.
 
+## v1.10.2
+
+### Changed
+- The star on gallery tiles is now a vertical three-dot "more" indicator (shown on hover) that opens the same menu as a right-click. Favorited personas show three small yellow stars stacked vertically instead (also on hover only), which open the same menu — favoriting and unfavoriting live there.
+- Header declutter: the three lock buttons (Default / Character / Chat) are now a single padlock-with-arrow dropdown. Click it to toggle any lock; the menu stays open so you can set several at once, and the padlock turns amber when any lock is on.
+- The incarnation arrow is now a slim caret attached to the right of the "Use this persona" check (before the lock dropdown) instead of a square button of its own.
+
+### Fixed
+- Right-clicking a persona in the chat-bar Quick Switcher no longer jumps into the Persona Management gallery. Edit, Open image gallery, Compare with… and Manage incarnations now open right over the chat (and work even if the Persona tab was never opened). Compare uses a searchable picker list. The gallery's own right-click menu is unchanged. Changes made in either place show up in the other immediately.
+
+## v1.10.1
+
+### Changed
+- The Incarnations bar is replaced by a small caret button next to "Back to grid" that opens a dropdown (switch / new / delete). It is tinted when the persona has more than one incarnation.
+- The incarnation count badge on gallery tiles moved to the bottom-right corner so it no longer overlaps the ACTIVE badge.
+
+### Fixed
+- Image bindings no longer change a persona's portrait outside the bound chat/character. A bound image shows only while its chat or character is open; elsewhere the persona shows its Default image, or else the portrait you last picked yourself (a new internal "base" image that bindings never touch). Inactive personas are restored too.
+
+## v1.10.0
+
+### Added
+- Right-click menu in the Quick Switcher: right-click (or long-press on touch) a persona in the chat-bar popup for the same menu the gallery tiles have. Both menus are built from one shared definition, so they always match. Edit, Open image gallery, Compare with… and Manage incarnations open the Persona Management drawer and drive the gallery; Set as active, Duplicate, Delete and favorites work even if the gallery isn’t mounted.
+- Persona Incarnations: complete, separate versions of one persona (Steve → Steve Z → Steve M) managed from a new Incarnations bar under the persona’s header. Each has fully independent name, description, sections, injection settings, lorebook, variants, portrait, image gallery, bindings and native character connections. Alternates never appear as extra personas — not in the gallery, the Quick Switcher or SillyTavern’s native list — just a small layer badge with the count. Variants are unchanged.
+- New incarnation dialog: start from a blank slate, or make a one-time copy of selected parts (core description, sections, variants, portrait & gallery, injection settings & lorebook) from any existing incarnation. After creation nothing is shared or synchronized.
+- Switch incarnations from the bar, or from the right-click menu in either the gallery or the Quick Switcher. You can always return to the original, which can’t be deleted.
+- Image bindings: each gallery image can be bound to characters and/or chats (link button on the tile) and one image can be the default. While the persona is active, its portrait switches automatically when the chat or character changes — chat binding first, then character, then default. If nothing matches and there is no default, the portrait is left alone. Bindings belong to the incarnation that owns the gallery.
+- Searching the gallery also matches the names of a persona’s other incarnations.
+
+### Notes
+the live incarnation is the persona’s ordinary data, and inactive ones are parked as snapshots (with their own portrait copy) in the extension settings, so every existing feature keeps working unchanged. Limitations: Duplicate copies only the live incarnation; SillyTavern’s native character connections only take effect for the live incarnation; switching is refused while a message is generating.
+
+## v1.9.0
+
+### Added
+- **Favorites.** A star on each gallery tile (on hover; always visible once a
+  persona is a favorite, and on touch screens). When at least one favorite
+  exists, a star button appears in the toolbar to show favorites only.
+- **More sorting.** Recently modified, token count (highest / lowest first) and
+  favorites first join name / recently used / recently created. "Recently
+  used" now lists the active persona first, then the one used before it, and
+  so on. Sorting is shared with the Quick Switcher's code (`persona-sort.js`).
+- **Remembers where you left off.** The last-used detail tab (opening another
+  persona no longer resets it to Details) and the grid's scroll position are
+  restored, including after the Persona's tab was closed and reopened. Search
+  and sort were already remembered.
+- **Right-click menu on tiles:** Set as active, Edit, Duplicate, Open image
+  gallery, Add/Remove favorite, Compare with…, Delete. Uses the same code as
+  the detail view's buttons.
+- **Persona comparison.** *Compare with…* then click a second persona: a
+  read-only side-by-side window with token and character counts, injection
+  position / depth / role, lorebook, sections, last-modified time and the
+  injected description with differing words highlighted (`text-diff.js`).
+  Either side can be changed from its dropdown, or swapped.
+- **Image viewer.** The enlarge lightbox is now a proper viewer: scroll-wheel
+  zoom toward the cursor, click-and-drag panning, pinch and drag on touch,
+  double-click to toggle fit / zoomed, Fit and 1:1 buttons, keyboard controls,
+  and the file's real pixel size shown. It loads original files only; the
+  portrait opens the gallery original when the current portrait came from the
+  gallery (SillyTavern stores the portrait itself at a fixed, modest size).
+- **Gallery tab:** image count on the tab (`Gallery (n)`), drag-and-drop image
+  uploads, and drag-to-reorder (the `«` `»` buttons follow the order).
+
+### Changed
+- Gallery tiles are now wrapped in a small cell so the favorite star can be a
+  sibling button of the tile (a button inside a button is invalid HTML).
+- A "last modified" time is recorded when Persona Library saves a persona, and
+  `date_last_used` is now also stamped when a persona becomes active through
+  locks, the native panel or the Quick Switcher, so "recently used" is accurate.
+
 ## v1.8.0
 
 ### Added

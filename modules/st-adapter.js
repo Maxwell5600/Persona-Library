@@ -17,12 +17,15 @@ import {
     setPersonaLockState as stSetPersonaLockState,
     getUserAvatars as stGetUserAvatars,
 } from '../../../../personas.js';
-import { composeVariants, normalizeVariants, defaultVariants } from './variants.js';
+import { composeVariants, normalizeVariants, defaultVariants, cloneNode } from './variants.js';
 
 const SETTINGS_KEY = 'personaLibrary';
 const SECTIONS_KEY = 'personaLibrarySections';
 const VARIANTS_KEY = 'personaLibraryVariants';
 const GALLERY_KEY = 'personaLibraryGallery';
+const MODIFIED_KEY = 'personaLibraryModified';
+const INCARNATIONS_KEY = 'personaLibraryIncarnations';
+const MAIN_INC = 'main'; // key of every persona's original incarnation
 const CHAR_BINDING_FIELD = 'personaLibraryBindingId';
 const CHAT_BINDING_KEY = 'personaLibraryBindingId';
 const DEFAULTS = {
@@ -37,9 +40,35 @@ const DEFAULTS = {
     // key from `sort` above (the main gallery's sort) so picking a different
     // order in one doesn't silently change the other.
     quickSwitcherSort: 'name',
+    // Gallery view state, remembered between sessions (see gallery.js).
+    // `favorites` is a list of persona ids; `favoritesOnly` is the optional
+    // "show only favorites" filter; `detailTab` is the last-used tab of the
+    // detail view; `scrollTop` is the grid's last scroll position.
+    favorites: [],
+    favoritesOnly: false,
+    detailTab: 'details',
+    scrollTop: 0,
 };
 
 export const ctx = () => globalThis.SillyTavern?.getContext?.() ?? null;
+
+/*
+ * "Recently modified" support. SillyTavern keeps no modified-date for a
+ * persona (only date_added / date_last_used), so we stamp one ourselves
+ * whenever Persona Library saves something about it. Kept in our own
+ * extension settings, never in power_user, so nothing native is touched.
+ */
+function modifiedStore() {
+    const c = ctx();
+    if (!c?.extensionSettings) return {};
+    c.extensionSettings[MODIFIED_KEY] = c.extensionSettings[MODIFIED_KEY] ?? {};
+    return c.extensionSettings[MODIFIED_KEY];
+}
+
+function touchModified(id) {
+    if (!id) return;
+    modifiedStore()[id] = Date.now();
+}
 
 /**
  * SillyTavern's own code emits event_types.PERSONA_UPDATED after any
@@ -238,6 +267,7 @@ export async function savePersonaSections(id, { core, sections }) {
         pu.persona_description = d.description;
         refreshNativePersonaUI();
     }
+    touchModified(id);
     ctx()?.saveSettingsDebounced?.();
     notifyPersonaUpdated(id);
     refreshNativePersonaList(id);
@@ -665,6 +695,38 @@ export function registerVariantGenerationHook() {
     };
 }
 
+/**
+ * Keeps each persona's date_last_used honest for the "Recently used" sort.
+ * setActive() below already stamps it, but personas also change through
+ * chat/character/default locks, the native panel and the Quick Switcher —
+ * none of which would otherwise leave a trace, so "the one used before the
+ * active one" would be wrong. Call once at boot; returns an unregister fn.
+ */
+let usageHandler = null;
+export function registerPersonaUsageTracking() {
+    if (usageHandler) return () => {};
+    const c = ctx();
+    const es = c?.eventSource;
+    const types = c?.eventTypes ?? c?.event_types ?? {};
+    if (!es?.on || !types.PERSONA_CHANGED) return () => {};
+    usageHandler = () => {
+        try {
+            const id = getActiveId();
+            const d = powerUser().persona_descriptions?.[id];
+            if (!d) return;
+            const now = Date.now();
+            if (now - (d.date_last_used ?? 0) < 1000) return; // setActive() just stamped it
+            d.date_last_used = now;
+            ctx()?.saveSettingsDebounced?.();
+        } catch (e) { console.warn('[PersonaLibrary] could not record persona usage', e); }
+    };
+    es.on(types.PERSONA_CHANGED, usageHandler);
+    return () => {
+        try { es.removeListener?.(types.PERSONA_CHANGED, usageHandler); } catch { /* ignore */ }
+        usageHandler = null;
+    };
+}
+
 export function getPersonas() {
     const pu = powerUser();
     const personas = pu.personas ?? {};
@@ -688,6 +750,13 @@ export function getPersonas() {
                 : [],
             created: d.date_added ?? index,
             lastUsed: d.date_last_used ?? d.date_added ?? index,
+            modified: modifiedStore()[id] ?? d.date_added ?? index,
+            // Incarnations (see the section above duplicatePersona). Only the
+            // LIVE incarnation is ever a persona entry; these just let the
+            // gallery / Quick Switcher show a badge and name the original.
+            incarnationCount: incStore()[id]?.slots?.length ?? 1,
+            incarnationKey: incStore()[id]?.activeKey ?? null,
+            incarnationOriginalName: incStore()[id] ? (getPersonaIncarnations(id)?.list?.find((x) => x.isOriginal)?.name ?? null) : null,
         };
     });
 }
@@ -774,6 +843,12 @@ export async function updatePersona(id, patch) {
     if (!pu.personas) throw new Error('Persona storage unavailable');
     const renamed = patch.name && patch.name !== pu.personas[id];
     if (patch.name) pu.personas[id] = patch.name;
+    // The live name IS the active incarnation's name — keep its slot label in step.
+    if (patch.name) {
+        const incRec = incStore()[id];
+        const liveSlot = incRec?.slots?.find((x) => x.key === incRec.activeKey);
+        if (liveSlot) liveSlot.name = patch.name;
+    }
     pu.persona_descriptions = pu.persona_descriptions ?? {};
     const d = pu.persona_descriptions[id] ?? { description: '', position: 0, depth: 2, role: 0, lorebook: '' };
     if (patch.description !== undefined) d.description = patch.description;
@@ -806,6 +881,7 @@ export async function updatePersona(id, patch) {
     } else if (renamed) {
         console.log('[PersonaLibrary] renamed, but this is NOT the active persona — skipping setUserName by design');
     }
+    touchModified(id);
     c?.saveSettingsDebounced?.();
     if (renamed) {
         try {
@@ -830,6 +906,9 @@ export async function replaceAvatar(id, file) {
     // Every future avatarUrl(id) call — including the re-render that fires
     // right after this — will now include a fresh token automatically.
     avatarCacheBust[id] = Date.now();
+    portraitClean.delete(id); // the live portrait no longer matches any stored incarnation copy
+    touchModified(id);
+    ctx()?.saveSettingsDebounced?.();
     notifyPersonaUpdated(id);
     refreshNativePersonaList(id);
 }
@@ -878,9 +957,12 @@ function galleryEnqueue(id, fn) {
     return next;
 }
 
-function galleryFolderFor(id) {
-    const base = String(id).replace(/\.[^.]+$/, '').replace(/[^\w.-]/g, '_').replace(/^\.+|\.+$/g, '').slice(0, 80) || 'persona';
-    return `pl-gallery_${base}`;
+function safeBase(id) {
+    return String(id).replace(/\.[^.]+$/, '').replace(/[^\w.-]/g, '_').replace(/^\.+|\.+$/g, '').slice(0, 80) || 'persona';
+}
+
+function galleryFolderFor(id, suffix = '') {
+    return `pl-gallery_${safeBase(id)}${suffix}`;
 }
 
 function galleryUrl(path) {
@@ -891,11 +973,21 @@ function galleryUid() {
     return globalThis.crypto?.randomUUID?.() ?? `g-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** Normalized per-image bindings: { characters: [{uuid,label}], chats: [{uuid,label}] }. */
+function normImageBindings(b) {
+    const refs = (arr) => (Array.isArray(arr) ? arr.filter((r) => r?.uuid).map((r) => ({ uuid: String(r.uuid), label: String(r.label ?? '') })) : []);
+    return { characters: refs(b?.characters), chats: refs(b?.chats) };
+}
+
 function viewOfRecord(rec) {
     if (!rec) return null;
     return {
         currentKey: rec.currentKey ?? null,
-        images: (rec.images ?? []).map((im) => ({ key: im.key, name: im.name, path: im.path, url: galleryUrl(im.path) })),
+        defaultKey: rec.defaultKey ?? null,
+        images: (rec.images ?? []).map((im) => ({
+            key: im.key, name: im.name, path: im.path, url: galleryUrl(im.path),
+            bindings: normImageBindings(im.bindings),
+        })),
     };
 }
 
@@ -971,13 +1063,17 @@ export function getPersonaGalleryImages(id) {
 async function ensureGalleryInner(id) {
     const store = galleryStore();
     if (store[id]) return store[id];
-    const folder = galleryFolderFor(id);
+    // A non-original incarnation gets its own folder so its files never
+    // share a directory with the original's (paths are still the only thing
+    // ever deleted, this is purely tidiness).
+    const incRec = incStore()[id];
+    const folder = galleryFolderFor(id, incRec && incRec.activeKey !== MAIN_INC ? `_${incRec.activeKey}` : '');
     const blob = await fetchAvatarBlob(id);
     const path = await galleryUploadBlob(folder, blob, id);
     const key = galleryUid();
     // Re-check: nothing else can have created it (we're in the queue), but be strict.
     if (store[id]) return store[id];
-    store[id] = { folder, currentKey: key, images: [{ key, path, name: 'Original portrait' }] };
+    store[id] = { folder, currentKey: key, baseKey: key, images: [{ key, path, name: 'Original portrait' }] };
     ctx()?.saveSettingsDebounced?.();
     return store[id];
 }
@@ -1005,7 +1101,7 @@ export function addPersonaGalleryImages(id, files, { markLastCurrent = false } =
         }
         // Used when the file just became the portrait through another path
         // (Change portrait): record it as current WITHOUT writing the avatar again.
-        if (markLastCurrent && added) rec.currentKey = rec.images[rec.images.length - 1].key;
+        if (markLastCurrent && added) { rec.currentKey = rec.images[rec.images.length - 1].key; rec.baseKey = rec.currentKey; delete rec.boundApplied; }
         ctx()?.saveSettingsDebounced?.();
         if (!added && firstError) throw firstError;
         return { added, failed: list.length - added, gallery: viewOfRecord(rec) };
@@ -1013,19 +1109,27 @@ export function addPersonaGalleryImages(id, files, { markLastCurrent = false } =
 }
 
 /** Copy a gallery image over the persona's avatar and mark it current. */
-async function applyGalleryImage(id, rec, entry) {
+async function applyGalleryImage(id, rec, entry, { setBase = true, bound = false } = {}) {
     const res = await fetch(galleryUrl(entry.path), { cache: 'no-cache' });
     if (!res.ok) throw new Error('That gallery image file is missing on the server.');
     const blob = await res.blob();
     const file = new File([blob], id, { type: blob.type || 'image/png' });
     // Mark current BEFORE the avatar write: replaceAvatar() notifies the UI,
     // which re-renders immediately and reads this record. Roll back on failure.
-    const prev = rec.currentKey;
+    const prev = { cur: rec.currentKey, base: rec.baseKey, bound: rec.boundApplied };
     rec.currentKey = entry.key;
+    // setBase: a deliberate pick by the user becomes the persona's "base"
+    // portrait. A portrait applied automatically by an image binding (or the
+    // fallback after one) never touches it, so bindings can't overwrite what
+    // the persona looks like everywhere else.
+    if (setBase) rec.baseKey = entry.key;
+    if (bound) rec.boundApplied = true; else delete rec.boundApplied;
     try {
         await replaceAvatar(id, file);
     } catch (e) {
-        rec.currentKey = prev;
+        rec.currentKey = prev.cur;
+        if (prev.base === undefined) delete rec.baseKey; else rec.baseKey = prev.base;
+        if (prev.bound) rec.boundApplied = true; else delete rec.boundApplied;
         throw e;
     }
     ctx()?.saveSettingsDebounced?.();
@@ -1036,7 +1140,7 @@ export function setPersonaGalleryCurrent(id, key) {
         const rec = galleryStore()[id];
         const entry = rec?.images.find((im) => im.key === key);
         if (!entry) throw new Error('Gallery image not found');
-        if (rec.currentKey === key) return viewOfRecord(rec);
+        if (rec.currentKey === key) { rec.baseKey = key; delete rec.boundApplied; ctx()?.saveSettingsDebounced?.(); return viewOfRecord(rec); }
         await applyGalleryImage(id, rec, entry);
         return viewOfRecord(rec);
     });
@@ -1067,8 +1171,32 @@ export function removePersonaGalleryImage(id, key) {
         if (idx < 0) return viewOfRecord(rec);
         const [entry] = rec.images.splice(idx, 1);
         if (rec.currentKey === key) rec.currentKey = null;
+        if (rec.baseKey === key) delete rec.baseKey;
         ctx()?.saveSettingsDebounced?.();
         await galleryDeletePath(entry.path);
+        return viewOfRecord(rec);
+    });
+}
+
+/**
+ * Reorders a persona's gallery to match `orderedKeys` (the « » stepping
+ * order follows it). Keys that are unknown are ignored; entries missing from
+ * the list keep their relative order at the end, so a stale call from a
+ * slightly out-of-date view can never drop an image.
+ */
+export function reorderPersonaGalleryImages(id, orderedKeys) {
+    return galleryEnqueue(id, async () => {
+        const rec = galleryStore()[id];
+        if (!rec) return null;
+        const byKey = new Map(rec.images.map((im) => [im.key, im]));
+        const next = [];
+        for (const k of orderedKeys ?? []) {
+            const im = byKey.get(k);
+            if (im) { next.push(im); byKey.delete(k); }
+        }
+        for (const im of rec.images) if (byKey.has(im.key)) next.push(im);
+        rec.images = next;
+        ctx()?.saveSettingsDebounced?.();
         return viewOfRecord(rec);
     });
 }
@@ -1085,29 +1213,503 @@ export function deletePersonaGallery(id) {
     });
 }
 
+/**
+ * Copies (never shares) a gallery RECORD: every image is re-uploaded as an
+ * independent file under `folder`, keys are re-minted, and per-image
+ * bindings plus the default/current markers carry across by key mapping.
+ * Used by Duplicate and by creation-time copying of an Incarnation.
+ * Returns null when nothing could be copied.
+ */
+async function copyGalleryRecord(src, folder) {
+    const images = [];
+    let currentKey = null;
+    let defaultKey = null;
+    let baseKey = null;
+    for (const im of src?.images ?? []) {
+        try {
+            const res = await fetch(galleryUrl(im.path), { cache: 'no-cache' });
+            if (!res.ok) continue;
+            const path = await galleryUploadBlob(folder, await res.blob(), im.name);
+            const key = galleryUid();
+            images.push({ key, path, name: im.name, ...(im.bindings ? { bindings: structuredClone(im.bindings) } : {}) });
+            if (im.key === src.currentKey) currentKey = key;
+            if (im.key === src.defaultKey) defaultKey = key;
+            if (im.key === src.baseKey) baseKey = key;
+        } catch (e) { console.warn('[PersonaLibrary] could not copy a gallery image', e); }
+    }
+    return images.length ? { folder, currentKey, defaultKey, ...(baseKey ? { baseKey } : {}), images } : null;
+}
+
 /** Copies (not shares) a gallery to a new persona id — used by Duplicate. */
 async function copyPersonaGallery(fromId, toId) {
     return galleryEnqueue(fromId, async () => {
         const store = galleryStore();
         const src = store[fromId];
         if (!src || store[toId]) return;
-        const folder = galleryFolderFor(toId);
-        const images = [];
-        let currentKey = null;
-        for (const im of src.images) {
-            try {
-                const res = await fetch(galleryUrl(im.path), { cache: 'no-cache' });
-                if (!res.ok) continue;
-                const path = await galleryUploadBlob(folder, await res.blob(), im.name);
-                const key = galleryUid();
-                images.push({ key, path, name: im.name });
-                if (im.key === src.currentKey) currentKey = key;
-            } catch (e) { console.warn('[PersonaLibrary] could not copy a gallery image', e); }
-        }
-        if (images.length) {
-            store[toId] = { folder, currentKey, images };
+        const copied = await copyGalleryRecord(src, galleryFolderFor(toId));
+        if (copied) {
+            store[toId] = copied;
             ctx()?.saveSettingsDebounced?.();
         }
+    });
+}
+
+/*
+ * Per-image bindings ("image bindings").
+ *
+ * Each gallery image can be bound to characters and/or chats; the gallery
+ * record may also name one DEFAULT image. Whenever the chat or the active
+ * persona changes, the active persona's portrait is switched to the image
+ * that matches — chat binding first (most specific), then character binding,
+ * then the default image (if one is set). If nothing matches and no default
+ * is set the portrait is left exactly as it is, so a persona that never uses
+ * bindings is never touched.
+ *
+ * The bindings live INSIDE the gallery record, so they belong to whichever
+ * incarnation owns that gallery — each incarnation has its own, fully
+ * independent set. Identity uses the same ids as Variants' bindings
+ * (reliable id when stamped, else `avatar:<file>`; chat id from chat metadata).
+ */
+function resolveBoundImageKey(rec) {
+    const imgs = rec?.images ?? [];
+    if (!imgs.length) return null;
+    const chatId = getChatBindingId();
+    if (chatId) {
+        const hit = imgs.find((im) => im.bindings?.chats?.some((r) => r.uuid === chatId));
+        if (hit) return { key: hit.key, bound: true };
+    }
+    const info = getCurrentCharacterInfo();
+    const charIds = new Set([info?.bindingId, info?.avatar ? `avatar:${info.avatar}` : null].filter(Boolean));
+    if (charIds.size) {
+        const hit = imgs.find((im) => im.bindings?.characters?.some((r) => charIds.has(r.uuid)));
+        if (hit) return { key: hit.key, bound: true };
+    }
+    return resolveFallbackImageKey(rec);
+}
+
+/**
+ * What the persona looks like when no binding applies (and everywhere outside
+ * a bound chat/character): the image marked Default, else the portrait the
+ * user last picked on purpose (baseKey). Bindings never change either.
+ */
+function resolveFallbackImageKey(rec) {
+    const imgs = rec?.images ?? [];
+    if (rec?.defaultKey && imgs.some((im) => im.key === rec.defaultKey)) return { key: rec.defaultKey, bound: false };
+    if (rec?.baseKey && imgs.some((im) => im.key === rec.baseKey)) return { key: rec.baseKey, bound: false };
+    return null;
+}
+
+/** Runs inside the gallery queue. Returns true if the portrait changed. */
+async function applyBoundImageInner(id) {
+    const rec = galleryStore()[id];
+    if (!rec) return false;
+    // Records from before baseKey existed: adopt the current portrait as the
+    // base the first time we're about to override it.
+    if (rec.baseKey === undefined && rec.currentKey && !rec.boundApplied) rec.baseKey = rec.currentKey;
+    const res = resolveBoundImageKey(rec);
+    if (!res || res.key === rec.currentKey) {
+        if (res && (!!rec.boundApplied !== res.bound)) { if (res.bound) rec.boundApplied = true; else delete rec.boundApplied; }
+        return false;
+    }
+    const entry = rec.images.find((im) => im.key === res.key);
+    if (!entry) return false;
+    await applyGalleryImage(id, rec, entry, { setBase: false, bound: res.bound });
+    return true;
+}
+
+/** Puts an INACTIVE persona's portrait back to its default/base after a binding had changed it. */
+async function restoreBaseImageInner(id) {
+    const rec = galleryStore()[id];
+    if (!rec?.boundApplied) return false;
+    const res = resolveFallbackImageKey(rec);
+    if (!res) { delete rec.boundApplied; return false; }
+    if (res.key === rec.currentKey) { delete rec.boundApplied; return false; }
+    const entry = rec.images.find((im) => im.key === res.key);
+    if (!entry) return false;
+    await applyGalleryImage(id, rec, entry, { setBase: false, bound: false });
+    return true;
+}
+
+/** Applies the matching bound image for the ACTIVE persona, if any. Never throws. */
+export function applyBoundImageForActivePersona() {
+    const id = getActiveId();
+    if (!id || !galleryStore()[id]) return Promise.resolve(false);
+    return galleryEnqueue(id, () => applyBoundImageInner(id)).catch((e) => {
+        console.warn('[PersonaLibrary] could not apply a bound image', e);
+        return false;
+    });
+}
+
+export function setPersonaImageBindings(id, key, bindings) {
+    return galleryEnqueue(id, async () => {
+        const rec = galleryStore()[id];
+        const im = rec?.images.find((x) => x.key === key);
+        if (!im) throw new Error('Gallery image not found');
+        const b = normImageBindings(bindings);
+        if (b.characters.length || b.chats.length) im.bindings = b; else delete im.bindings;
+        ctx()?.saveSettingsDebounced?.();
+        if (getActiveId() === id) { try { await applyBoundImageInner(id); } catch (e) { console.warn('[PersonaLibrary] bound image apply failed', e); } }
+        return viewOfRecord(rec);
+    });
+}
+
+/** key = null clears it. The default image is what shows when no binding matches. */
+export function setPersonaDefaultImage(id, key) {
+    return galleryEnqueue(id, async () => {
+        const rec = galleryStore()[id];
+        if (!rec) throw new Error('This persona has no gallery yet');
+        if (key && !rec.images.some((x) => x.key === key)) throw new Error('Gallery image not found');
+        if (key) rec.defaultKey = key; else delete rec.defaultKey;
+        ctx()?.saveSettingsDebounced?.();
+        if (getActiveId() === id) { try { await applyBoundImageInner(id); } catch (e) { console.warn('[PersonaLibrary] bound image apply failed', e); } }
+        return viewOfRecord(rec);
+    });
+}
+
+let imageBindingHandler = null;
+let imageBindingTimer = null;
+/** Call once at boot; re-applies bound images when the chat or persona changes. Returns an unregister fn. */
+export function registerImageBindingHook() {
+    if (imageBindingHandler) return () => {};
+    const c = ctx();
+    const es = c?.eventSource;
+    const types = c?.eventTypes ?? c?.event_types ?? {};
+    const names = [types.CHAT_CHANGED, types.PERSONA_CHANGED].filter(Boolean);
+    if (!es?.on || !names.length) return () => {};
+    imageBindingHandler = () => {
+        // Debounced: a chat switch fires CHAT_CHANGED and then (via locks)
+        // PERSONA_CHANGED within moments; settle on the final state once.
+        clearTimeout(imageBindingTimer);
+        imageBindingTimer = setTimeout(() => {
+            applyBoundImageForActivePersona();
+            // Personas that are no longer active must not stay stuck on an image that was only bound to a chat.
+            const activeId = getActiveId();
+            for (const [pid, rec] of Object.entries(galleryStore())) {
+                if (pid !== activeId && rec?.boundApplied) {
+                    galleryEnqueue(pid, () => restoreBaseImageInner(pid)).catch((e) => console.warn('[PersonaLibrary] could not restore portrait', e));
+                }
+            }
+        }, 300);
+    };
+    for (const n of names) es.on(n, imageBindingHandler);
+    imageBindingHandler();
+    return () => {
+        for (const n of names) { try { es.removeListener?.(n, imageBindingHandler); } catch { /* ignore */ } }
+        clearTimeout(imageBindingTimer);
+        imageBindingHandler = null;
+    };
+}
+
+/*
+ * Persona Incarnations.
+ *
+ * An incarnation is a COMPLETE, independent persona configuration living
+ * inside one persona entry (Steve → Steve Z → Steve M). Design:
+ *
+ *  - The persona id never changes and no extra persona is ever created, so
+ *    the Persona Library gallery, SillyTavern's native persona list and
+ *    every other extension keep seeing exactly one entry.
+ *  - The ACTIVE incarnation is simply the persona's ordinary, live data —
+ *    name, description, injection settings, lorebook, native connections,
+ *    Sections, Variants, image gallery and the portrait file. All existing
+ *    code (generation hook, native panel, other extensions) keeps working
+ *    unchanged because it only ever sees the live incarnation.
+ *  - Every OTHER incarnation is parked as a snapshot of that same data in
+ *    extensionSettings[INCARNATIONS_KEY][id], plus its own portrait copy.
+ *  - Switching = park the live data into its slot, load the target's slot
+ *    into the live fields. Nothing is shared, inherited or synchronized, so
+ *    editing one can never change another.
+ *
+ * Record: { activeKey, slots: [{ key, name, snapshot: Snapshot|null, portrait: {path}|null }] }
+ *   - slots[0] is always the original (key 'main'); it can't be deleted.
+ *   - the ACTIVE slot's snapshot is null (the live data is the truth).
+ *   - a persona with a single slot has no record at all.
+ * Snapshot: { name, desc, sections, variants, gallery } — raw copies of the
+ *   per-persona stores, `desc` being persona_descriptions[id] without its
+ *   date fields (those belong to the persona, not an incarnation).
+ *
+ * Known limitation: SillyTavern's native character "connections" live on the
+ * descriptor, so only the live incarnation's connections are in force. Parked
+ * incarnations' connections are kept, and take effect once switched to.
+ */
+const portraitClean = new Map(); // id -> stored portrait path that currently equals the live avatar
+
+function incStore() {
+    const c = ctx();
+    if (!c?.extensionSettings) return {};
+    c.extensionSettings[INCARNATIONS_KEY] = c.extensionSettings[INCARNATIONS_KEY] ?? {};
+    return c.extensionSettings[INCARNATIONS_KEY];
+}
+
+const incSlot = (rec, key) => rec?.slots?.find((x) => x.key === key) ?? null;
+const incUid = () => `inc-${galleryUid().replace(/[^a-z0-9]/gi, '').slice(0, 8)}`;
+
+function personaNameOf(id) {
+    const n = powerUser().personas?.[id];
+    return typeof n === 'string' ? n : (n?.name ?? id);
+}
+
+function guardNoGeneration(id) {
+    if (patchState.active && patchState.id === id) {
+        throw new Error('A message is generating right now — try again once it finishes.');
+    }
+}
+
+export function getPersonaIncarnations(id) {
+    const rec = incStore()[id];
+    if (!rec || !Array.isArray(rec.slots) || rec.slots.length < 2) return null;
+    return {
+        activeKey: rec.activeKey,
+        list: rec.slots.map((sl) => {
+            const active = sl.key === rec.activeKey;
+            return {
+                key: sl.key,
+                isOriginal: sl.key === MAIN_INC,
+                active,
+                name: active ? personaNameOf(id) : sl.name,
+                imageCount: (active ? galleryStore()[id]?.images?.length : sl.snapshot?.gallery?.images?.length) ?? 0,
+            };
+        }),
+    };
+}
+
+/** Deep copy of everything that makes up the live incarnation (not the portrait file). */
+function captureLive(id) {
+    const d = powerUser().persona_descriptions?.[id] ?? {};
+    // eslint-disable-next-line no-unused-vars
+    const { date_added, date_last_used, ...desc } = d;
+    return structuredClone({
+        name: personaNameOf(id),
+        desc,
+        sections: sectionsStore()[id] ?? null,
+        variants: variantsStore()[id] ?? null,
+        gallery: galleryStore()[id] ?? null,
+    });
+}
+
+/** Synchronous: makes `snap` the persona's live data. No failure points. */
+function writeLive(id, snap) {
+    const pu = powerUser();
+    const prevName = personaNameOf(id);
+    const cur = pu.persona_descriptions?.[id] ?? {};
+    pu.personas = pu.personas ?? {};
+    pu.personas[id] = snap.name;
+    pu.persona_descriptions = pu.persona_descriptions ?? {};
+    const d = { ...structuredClone(snap.desc ?? {}), date_added: cur.date_added, date_last_used: cur.date_last_used };
+    pu.persona_descriptions[id] = d;
+    const put = (store, v) => { if (v) store[id] = structuredClone(v); else delete store[id]; };
+    put(sectionsStore(), snap.sections);
+    put(variantsStore(), snap.variants);
+    put(galleryStore(), snap.gallery);
+
+    if (getActiveId() === id) {
+        // Same fields SillyTavern's own selectCurrentPersona() fills on a
+        // persona switch — these (not the dictionary entry) are what the
+        // prompt builder and native panel actually read for the active persona.
+        pu.persona_description = d.description ?? '';
+        pu.persona_description_position = d.position ?? 0;
+        pu.persona_description_depth = d.depth ?? 2;
+        pu.persona_description_role = d.role ?? 0;
+        pu.persona_description_lorebook = d.lorebook ?? '';
+        refreshNativePersonaUI();
+        if (prevName !== snap.name) {
+            try { setUserName(snap.name, { toastPersonaNameChange: false }); } catch (e) { console.warn('[PersonaLibrary] setUserName failed', e); }
+        }
+    }
+    touchModified(id);
+    const c = ctx();
+    c?.saveSettingsDebounced?.();
+    if (prevName !== snap.name) {
+        try { c?.eventSource?.emit?.(c?.event_types?.PERSONA_RENAMED, { avatarId: id, newName: snap.name }); } catch (e) { console.warn('[PersonaLibrary] could not emit PERSONA_RENAMED', e); }
+    }
+    notifyPersonaUpdated(id);
+    refreshNativePersonaList(id);
+}
+
+/** Saves the live portrait into the slot (skipped when the stored copy is already current). */
+async function storeSlotPortrait(id, slot) {
+    if (slot.portrait?.path && portraitClean.get(id) === slot.portrait.path) return;
+    const path = await galleryUploadBlob(`pl-inc_${safeBase(id)}`, await fetchAvatarBlob(id), id);
+    const old = slot.portrait?.path;
+    slot.portrait = { path };
+    portraitClean.set(id, path);
+    if (old) await galleryDeletePath(old);
+}
+
+/** Overwrites the live avatar file with the slot's stored portrait. */
+async function loadSlotPortrait(id, slot) {
+    if (!slot.portrait?.path) return;
+    const res = await fetch(galleryUrl(slot.portrait.path), { cache: 'no-cache' });
+    if (!res.ok) throw new Error('That incarnation\u2019s portrait file is missing on the server.');
+    const blob = await res.blob();
+    await replaceAvatar(id, new File([blob], id, { type: blob.type || 'image/png' }));
+    portraitClean.set(id, slot.portrait.path);
+}
+
+async function deleteSlotFiles(slot, { keepGallery = false } = {}) {
+    if (!keepGallery) for (const im of slot.snapshot?.gallery?.images ?? []) await galleryDeletePath(im.path);
+    if (slot.portrait?.path) await galleryDeletePath(slot.portrait.path);
+}
+
+/** Runs inside the gallery queue. */
+async function switchIncarnationInner(id, targetKey) {
+    guardNoGeneration(id);
+    const rec = incStore()[id];
+    if (!rec) throw new Error('This persona has no incarnations.');
+    if (rec.activeKey === targetKey) return;
+    const target = incSlot(rec, targetKey);
+    const out = incSlot(rec, rec.activeKey);
+    if (!target || !out) throw new Error('Incarnation not found.');
+    if (!target.snapshot) throw new Error('That incarnation\u2019s data is missing.');
+
+    // 1. Park the outgoing incarnation. Nothing live has changed yet, so a
+    //    failure here leaves everything exactly as it was.
+    const parked = captureLive(id);
+    await storeSlotPortrait(id, out);
+    out.snapshot = parked;
+    // 2. Bring the target's portrait in — the only remaining step that can fail.
+    try {
+        await loadSlotPortrait(id, target);
+    } catch (e) {
+        out.snapshot = null;
+        throw e;
+    }
+    // 3. Swap the data (synchronous, cannot fail halfway).
+    writeLive(id, target.snapshot);
+    target.snapshot = null;
+    rec.activeKey = targetKey;
+    ctx()?.saveSettingsDebounced?.();
+    // The newly live incarnation may have image bindings for the open chat.
+    if (getActiveId() === id) { try { await applyBoundImageInner(id); } catch (e) { console.warn('[PersonaLibrary] bound image apply failed', e); } }
+}
+
+export function switchPersonaIncarnation(id, key) {
+    return galleryEnqueue(id, () => switchIncarnationInner(id, key));
+}
+
+/**
+ * Builds a brand-new incarnation snapshot — either blank, or a ONE-TIME copy
+ * of selected parts of `srcSnap`. After this nothing links it to its source.
+ * `copy` = { core, sections, variants, images, settings } (all booleans).
+ */
+async function buildIncarnation(id, { srcSnap, srcPortraitBlob, newKey, name, copy }) {
+    const c = copy ?? {};
+    const srcSections = srcSnap.sections ?? { core: srcSnap.desc?.description ?? '', sections: [] };
+    const core = c.core ? (srcSections.core ?? '') : '';
+    const sections = c.sections ? structuredClone(srcSections.sections ?? []) : [];
+    const keep = c.settings ? srcSnap.desc ?? {} : {};
+    const desc = {
+        position: keep.position ?? 0, depth: keep.depth ?? 2, role: keep.role ?? 0, lorebook: keep.lorebook ?? '',
+        description: composeDescription(core, sections),
+    };
+    let variants = null;
+    if (c.variants && srcSnap.variants) {
+        variants = normalizeVariants(srcSnap.variants);
+        variants.nodes = variants.nodes.map(cloneNode); // fresh ids, independent copies
+    }
+    // Portrait first (one upload), then the gallery; undo the portrait if the gallery blows up.
+    const portraitBlob = c.images ? await srcPortraitBlob() : await (await fetch(default_user_avatar)).blob();
+    const portraitPath = await galleryUploadBlob(`pl-inc_${safeBase(id)}`, portraitBlob, id);
+    let gallery = null;
+    try {
+        if (c.images && srcSnap.gallery) gallery = await copyGalleryRecord(srcSnap.gallery, galleryFolderFor(id, `_${newKey}`));
+    } catch (e) {
+        await galleryDeletePath(portraitPath);
+        throw e;
+    }
+    return {
+        snapshot: { name, desc, sections: { core, sections }, variants, gallery },
+        portrait: { path: portraitPath },
+    };
+}
+
+/**
+ * Creates a new incarnation and switches to it.
+ * @param {string} id persona id
+ * @param {{ name: string, sourceKey?: string, copy?: null | { core?: boolean, sections?: boolean, variants?: boolean, images?: boolean, settings?: boolean } }} opts
+ *   copy = null → blank slate; otherwise a one-time copy of the ticked parts
+ *   from `sourceKey` (default: the currently live incarnation).
+ */
+export function createPersonaIncarnation(id, { name, sourceKey, copy = null } = {}) {
+    return galleryEnqueue(id, async () => {
+        guardNoGeneration(id);
+        const trimmed = (name ?? '').trim();
+        if (!trimmed) throw new Error('A name is required.');
+        const store = incStore();
+        let rec = store[id];
+        const firstTime = !rec;
+        if (!rec) {
+            rec = { activeKey: MAIN_INC, slots: [{ key: MAIN_INC, name: personaNameOf(id), snapshot: null, portrait: null }] };
+            store[id] = rec;
+        }
+        const newKey = incUid();
+        let built = null;
+        try {
+            // Resolve the copy source (live data, or a parked slot).
+            const srcKey = sourceKey && incSlot(rec, sourceKey) ? sourceKey : rec.activeKey;
+            const srcIsLive = srcKey === rec.activeKey;
+            const srcSlot = incSlot(rec, srcKey);
+            const srcSnap = srcIsLive ? captureLive(id) : srcSlot.snapshot;
+            if (!srcSnap) throw new Error('The copy source\u2019s data is missing.');
+            const srcPortraitBlob = srcIsLive
+                ? () => fetchAvatarBlob(id)
+                : async () => {
+                    const res = await fetch(galleryUrl(srcSlot.portrait.path), { cache: 'no-cache' });
+                    if (!res.ok) throw new Error('The copy source\u2019s portrait file is missing.');
+                    return await res.blob();
+                };
+            built = await buildIncarnation(id, { srcSnap, srcPortraitBlob, newKey, name: trimmed, copy });
+            rec.slots.push({ key: newKey, name: trimmed, snapshot: built.snapshot, portrait: built.portrait });
+            await switchIncarnationInner(id, newKey);
+        } catch (e) {
+            // Roll back a brand-new record entirely; otherwise keep any slot that did get created (it is a valid, parked incarnation).
+            if (firstTime) {
+                delete store[id];
+                if (built) { await deleteSlotFiles({ snapshot: built.snapshot, portrait: built.portrait }); }
+            }
+            throw e;
+        }
+        return newKey;
+    });
+}
+
+/** Deletes one incarnation (never the original). Deleting the live one returns to the original first. */
+export function deletePersonaIncarnation(id, key) {
+    return galleryEnqueue(id, async () => {
+        const store = incStore();
+        const rec = store[id];
+        if (!rec) return;
+        if (key === MAIN_INC) throw new Error('The original incarnation cannot be deleted.');
+        const slot = incSlot(rec, key);
+        if (!slot) return;
+        if (rec.activeKey === key) await switchIncarnationInner(id, MAIN_INC);
+        await deleteSlotFiles(slot);
+        rec.slots = rec.slots.filter((x) => x !== slot);
+        if (rec.slots.length < 2) {
+            // Only the original is left — the persona is an ordinary one again.
+            const main = incSlot(rec, MAIN_INC);
+            if (main?.portrait?.path) await galleryDeletePath(main.portrait.path);
+            delete store[id];
+            portraitClean.delete(id);
+        }
+        ctx()?.saveSettingsDebounced?.();
+        notifyPersonaUpdated(id);
+    });
+}
+
+/** Removes every incarnation's stored data for a persona that is itself being deleted. */
+export function deletePersonaIncarnations(id) {
+    return galleryEnqueue(id, async () => {
+        const store = incStore();
+        const rec = store[id];
+        if (!rec) return;
+        delete store[id];
+        portraitClean.delete(id);
+        for (const slot of rec.slots ?? []) {
+            // The live incarnation's gallery is removed by deletePersonaGallery().
+            await deleteSlotFiles(slot, { keepGallery: slot.key === rec.activeKey });
+        }
+        ctx()?.saveSettingsDebounced?.();
     });
 }
 
@@ -1129,6 +1731,7 @@ export async function duplicatePersona(id) {
     pu.personas[savedName] = `${pu.personas[id] ?? id} (copy)`;
     pu.persona_descriptions = pu.persona_descriptions ?? {};
     pu.persona_descriptions[savedName] = { ...(pu.persona_descriptions[id] ?? {}), date_added: Date.now() };
+    touchModified(savedName);
     ctx()?.saveSettingsDebounced?.();
     // Copy the gallery too (independent files, never shared references), so
     // deleting either persona later can't break the other's images. A failure
@@ -1182,8 +1785,12 @@ export async function deletePersona(id) {
     // (pu.personas/pu.persona_descriptions) would be stuck forever, since
     // the throw below would abort before ever reaching them.
     if (!res.ok && res.status !== 404) throw new Error(`Delete failed: ${res.status}`);
+    // Parked incarnations' galleries/portraits are separate files nothing else
+    // would ever clean up. Never lets a failure here block the delete itself.
+    try { await deletePersonaIncarnations(id); } catch (e) { console.warn('[PersonaLibrary] incarnation cleanup failed', e); }
     delete pu.personas?.[id];
     delete pu.persona_descriptions?.[id];
+    delete modifiedStore()[id];
     if (pu.default_persona === id) pu.default_persona = null;
     if (c?.chatMetadata?.persona === id) {
         delete c.chatMetadata.persona;
@@ -1237,6 +1844,7 @@ export async function createPersona(name) {
     } catch (e) {
         console.warn('[PersonaLibrary] could not seed a default avatar image for the new persona', e);
     }
+    touchModified(avatarId);
     ctx()?.saveSettingsDebounced?.();
     // Without this, the persona was created correctly — power_user had the
     // right data — but the native Persona Management panel's own list
@@ -1323,7 +1931,15 @@ export const stAdapter = {
     setPersonaGalleryCurrent,
     stepPersonaGallery,
     removePersonaGalleryImage,
+    reorderPersonaGalleryImages,
     deletePersonaGallery,
+    setPersonaImageBindings,
+    setPersonaDefaultImage,
+    applyBoundImageForActivePersona,
+    getPersonaIncarnations,
+    createPersonaIncarnation,
+    switchPersonaIncarnation,
+    deletePersonaIncarnation,
     createPersona,
     confirm: confirmDialog,
     promptText,

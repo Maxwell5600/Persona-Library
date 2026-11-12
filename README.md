@@ -27,8 +27,21 @@ browse characters, instead of scrolling a cramped avatar strip.
 **Gallery**
 - Dense, full-bleed photo grid instead of a small avatar strip — full-resolution
   images, not SillyTavern's low-res thumbnail crop
-- Search, sort (name / recently used / recently created), and an adjustable
-  tile-size slider
+- Search, sort, and an adjustable tile-size slider. Sort by name (A–Z / Z–A),
+  recently used (the active persona first, then the one used before it, and
+  so on), recently created, recently modified, token count (highest / lowest),
+  or favorites first
+- **Favorites** — hover a tile and click its star (always visible once set,
+  and on touch screens). Once you have any, a star button appears in the
+  toolbar to show favorites only
+- **Right-click a tile** (or a persona in the Quick Switcher) for quick actions: Set as active, Edit, Duplicate,
+  Open image gallery, Add/Remove favorite, Compare with…, Delete
+- **Compare** — right-click → *Compare with…*, then click a second persona.
+  A read-only side-by-side window shows token and character counts, injection
+  settings, lorebook, sections and the description with differing words
+  highlighted. Change either side from its dropdown, or swap them
+- Remembers where you left off: the last-used detail tab, the grid's scroll
+  position, your search and your sort
 - `+ New Persona` right in the toolbar — create one without leaving the gallery
 
 **Detail view** — click any persona to open a large modal with three tabs:
@@ -56,6 +69,36 @@ Everything (name, image, description, injection position/depth/role) writes
 through SillyTavern's own persona functions, so it stays fully compatible with
 the native Persona Management panel, other extensions, and your existing
 personas — nothing is stored in a separate, incompatible format.
+
+## Incarnations — separate full versions of one persona
+
+Variants (below) are for smaller tweaks. An **Incarnation** is an entirely
+different version of the same character — e.g. *Steve*, *Steve Z* (zombie
+apocalypse) and *Steve M* (high-fantasy mage) — kept inside ONE persona entry.
+
+- Open a persona; the **Incarnations** bar under its header lists them. Click
+  one to switch, **+ New incarnation** to add one, ✕ to delete (the original
+  can't be deleted).
+- Each incarnation has completely independent data: name, description,
+  sections, injection settings, lorebook, variants, portrait, image gallery,
+  bindings and native character connections. Editing one never changes
+  another — there is no inheritance or syncing.
+- When creating one you can **start blank**, or make a **one-time copy** of
+  chosen parts from an existing incarnation. After that it is independent.
+- Alternates never show up as extra personas — not in the gallery, the Quick
+  Switcher or SillyTavern's native list. The tile shows a layer badge with the
+  count and displays whichever incarnation is currently live.
+- Limits: Duplicate copies only the live incarnation; native character
+  connections only apply to the live one; switching is blocked mid-generation.
+
+## Image bindings
+
+In a persona's **Gallery** tab, the link button on an image binds it to the
+current character and/or chat, and can mark it as the persona's default image.
+While that persona is active, the portrait switches automatically on chat or
+character change: chat binding first, then character, then default. With no
+match and no default the portrait is left alone. Bindings belong to the
+incarnation that owns the gallery.
 
 ## Variants — dynamic, character/chat-aware blocks
 
@@ -138,8 +181,18 @@ be pinned to the real chat-bar icon row on your build/fork.
 
 Every persona can have its own set of swappable portraits.
 
-- **Gallery tab** (after Preview): add several images at once, click an image
-  to make it the persona's portrait, enlarge or remove images.
+- **Gallery tab** (after Preview, with an image count — `Gallery (4)`): add
+  several images at once, or drag image files onto the tab. Click an image to
+  make it the persona's portrait (the `CURRENT` badge marks it); remove images
+  or drag a tile's grip to reorder them — the `«` `»` buttons follow that order.
+- **Image viewer** — click the portrait or a gallery image's magnifier to open
+  it. Scroll to zoom toward the cursor, drag to pan, double-click to jump
+  between fit and a closer look, or use the Fit / 1:1 buttons (keys: `+` `-`
+  `0` `1`, arrows to pan, `Esc` to close; pinch and drag on touch screens). It
+  always loads the original file, never a thumbnail, and shows its pixel size.
+  Note that SillyTavern stores the portrait itself at a fixed, modest size —
+  when the current portrait came from the Gallery, the viewer opens the
+  untouched original instead, so zooming shows real detail.
 - **`«` `»` buttons** on either side of the persona arrows under the portrait
   step through that persona's gallery images. The inner `‹` `›` still switch
   personas.

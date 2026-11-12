@@ -668,26 +668,108 @@
        otherwise it renders correctly built but paints underneath the modal
        it was opened from. */
     z-index: 100000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 32px;
+    /* The viewer's own stage fills this; see modules/image-viewer.js. */
+    display: block;
+    padding: 0;
     background: rgba(0, 0, 0, 0.88);
-    cursor: zoom-out;
 }
 
 .pl-lightbox[hidden] {
     display: none;
 }
 
-.pl-lightbox-img {
-    max-width: 100%;
-    max-height: 100%;
-    object-fit: contain;
-    border-radius: 8px;
-    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
-    cursor: default;
+/* The viewer positions and scales the image itself (translate + scale from
+   the top-left), so it must be at its natural size with no CSS max-sizes. */
+.pl-lv-stage {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    touch-action: none;
+    cursor: zoom-out;
 }
+
+.pl-lightbox-img {
+    position: absolute;
+    left: 0;
+    top: 0;
+    max-width: none;
+    max-height: none;
+    width: auto;
+    height: auto;
+    transform-origin: 0 0;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-user-drag: none;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+    cursor: zoom-in;
+}
+
+.pl-lv-stage.pl-lv-zoomed .pl-lightbox-img { cursor: grab; }
+.pl-lv-stage.pl-lv-dragging .pl-lightbox-img { cursor: grabbing; }
+
+.pl-lv-status {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    padding: 6px 14px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    font-size: 0.9em;
+    pointer-events: none;
+}
+
+.pl-lv-status[hidden] { display: none; }
+
+.pl-lv-bar {
+    position: absolute;
+    left: 50%;
+    bottom: 16px;
+    transform: translateX(-50%);
+    max-width: calc(100% - 24px);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--pl-border);
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    font-size: 0.85em;
+}
+
+.pl-lv-btn {
+    min-width: 30px;
+    height: 30px;
+    padding: 0 8px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #fff;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.pl-lv-btn:hover { background: rgba(255, 255, 255, 0.18); }
+
+.pl-lv-btn.pl-lv-on {
+    border-color: var(--pl-accent);
+    color: var(--pl-accent);
+}
+
+.pl-lv-pct {
+    min-width: 3.4em;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.pl-lv-info { opacity: 0.8; padding: 0 6px; }
+.pl-lv-info.pl-lv-warn { color: #f5b942; opacity: 1; }
 
 .pl-lightbox-close {
     position: fixed;
@@ -2049,3 +2131,624 @@ body.pl-active #PersonaManagement {
     background: #e5484d;
     border-color: #e5484d;
 }
+
+/* =====================================================================
+   v1.9 additions: favorites, tile menu, comparison, gallery tab upgrades
+   ===================================================================== */
+
+/* ---------- favorites ---------- */
+
+/* Tiles now sit in a cell so the star can be a real sibling button. */
+.pl-tile-cell {
+    position: relative;
+    min-width: 0;
+}
+
+.pl-tile-star {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    width: 20px;
+    height: auto;
+    min-height: 30px;
+    padding: 6px 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: color-mix(in srgb, #000 55%, transparent);
+    color: #fff;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 120ms ease, transform 120ms ease;
+}
+
+/* Mirror the tile's own hover lift so the two move together. */
+.pl-tile-cell:hover .pl-tile-star { transform: translateY(-2px); }
+
+/* Same reaction for every tile: shown on hover/focus only. A favorite is told
+   apart by its icon (stars instead of dots), not by being always on screen. */
+.pl-tile-cell:hover .pl-tile-star,
+.pl-tile-cell:focus-within .pl-tile-star {
+    opacity: 1;
+}
+
+.pl-tile-star.pl-fav { color: #f5b942; }
+
+.pl-tile-star:hover {
+    background: color-mix(in srgb, #000 75%, transparent);
+    border-color: var(--pl-border);
+}
+
+/* Touch screens have no hover — keep the star reachable. */
+@media (hover: none) {
+    .pl-tile-star { opacity: 0.85; }
+}
+
+.pl-fav-filter[hidden] { display: none; }
+
+/* ---------- compare: pick-a-second-persona bar ---------- */
+
+.pl-compare-bar {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--pl-accent);
+    background: color-mix(in srgb, var(--pl-accent) 14%, transparent);
+    font-size: 0.9em;
+}
+
+.pl-compare-bar[hidden] { display: none; }
+
+.pl-tile.pl-compare-source {
+    border-color: var(--pl-accent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--pl-accent) 60%, transparent);
+}
+
+/* ---------- right-click menu ---------- */
+
+/* Needs the .pl-root theme variables but none of its layout. container-type
+   must be reset: inline-size containment would collapse an auto-width box. */
+.pl-ctx-menu.pl-root {
+    position: fixed;
+    /* Above the detail overlay (99999) and dialogs (100000) so menus opened
+       from inside the detail view (incarnation dropdown) are visible. */
+    z-index: 100001;
+    width: auto;
+    height: auto;
+    min-width: 190px;
+    max-width: 280px;
+    container-type: normal;
+    gap: 0;
+    padding: 4px;
+    border-radius: 10px;
+    border: 1px solid var(--pl-border);
+    /* Solid, like the Quick Switcher popup — readable over any tile art. */
+    background: rgb(17, 18, 23);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+.pl-ctx-menu[hidden] { display: none; }
+
+.pl-ctx-title {
+    padding: 4px 10px 6px;
+    font-size: 0.8em;
+    opacity: 0.65;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pl-ctx-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 6px 10px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.pl-ctx-item i { width: 1.2em; text-align: center; opacity: 0.85; }
+
+.pl-ctx-item:hover:not([disabled]),
+.pl-ctx-item:focus-visible {
+    outline: none;
+    background: color-mix(in srgb, var(--pl-accent) 25%, transparent);
+}
+
+.pl-ctx-item[disabled] { opacity: 0.45; cursor: default; }
+
+.pl-ctx-item.pl-ctx-danger:hover:not([disabled]),
+.pl-ctx-item.pl-ctx-danger:focus-visible {
+    background: #e5484d;
+    color: #fff;
+}
+
+.pl-ctx-sep {
+    height: 1px;
+    margin: 4px 6px;
+    background: var(--pl-border);
+}
+
+/* ---------- comparison window ---------- */
+
+.pl-compare.pl-root {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    width: auto;
+    height: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+.pl-compare[hidden] { display: none; }
+
+.pl-cmp-modal {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: min(94cqi, 1500px);
+    height: 100%;
+    max-height: 100%;
+    background: rgb(17, 18, 23);
+    border: 1px solid var(--pl-border);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
+.pl-cmp-header {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--pl-border);
+}
+
+.pl-cmp-title { font-size: 1.15em; font-weight: 600; }
+.pl-cmp-actions { display: flex; gap: 6px; }
+
+.pl-cmp-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 12px 16px 16px;
+}
+
+/* Row-major grid: each row's two cells line up across the columns. */
+.pl-cmp-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 6px 12px;
+}
+
+.pl-cmp-wide { grid-column: 1 / -1; }
+
+.pl-cmp-section-title {
+    margin-top: 8px;
+    font-weight: 600;
+    opacity: 0.85;
+}
+
+.pl-cmp-cell {
+    min-width: 0;
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--pl-border);
+    background: var(--pl-surface-2);
+}
+
+.pl-cmp-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.pl-cmp-thumb {
+    flex: 0 0 auto;
+    width: 56px;
+    aspect-ratio: 2 / 3;
+    object-fit: cover;
+    object-position: center top;
+    border-radius: 6px;
+}
+
+.pl-cmp-select { flex: 1 1 auto; min-width: 0; }
+
+.pl-cmp-fact {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 10px;
+    align-items: baseline;
+}
+
+.pl-cmp-label { opacity: 0.6; font-size: 0.85em; min-width: 6.5em; }
+.pl-cmp-value { overflow-wrap: anywhere; }
+
+.pl-cmp-diff {
+    border-color: var(--pl-accent);
+    background: color-mix(in srgb, var(--pl-accent) 10%, var(--pl-surface-2));
+}
+
+.pl-cmp-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    line-height: 1.45;
+}
+
+.pl-cmp-empty { opacity: 0.5; font-style: italic; }
+
+.pl-cmp-mark {
+    background: color-mix(in srgb, #f5b942 38%, transparent);
+    color: inherit;
+    border-radius: 3px;
+    padding: 0 1px;
+}
+
+/* Narrow windows: stack the two personas (A's cell, then B's, row by row). */
+@container (max-width: 640px) {
+    .pl-cmp-grid { grid-template-columns: minmax(0, 1fr); }
+    .pl-cmp-modal { max-width: 100%; }
+}
+
+/* ---------- gallery tab: drop zone + reordering ---------- */
+
+.pl-gallery-view {
+    position: relative;
+    min-height: 220px;
+    border: 2px dashed transparent;
+    border-radius: 10px;
+    transition: border-color 120ms ease, background 120ms ease;
+}
+
+.pl-gallery-view.pl-gal-dropping {
+    border-color: var(--pl-accent);
+    background: color-mix(in srgb, var(--pl-accent) 10%, transparent);
+}
+
+.pl-gal-handle { cursor: grab; }
+.pl-gal-handle:active { cursor: grabbing; }
+
+.pl-gal-tile.pl-gal-dragging { opacity: 0.4; }
+
+/* Insertion marker on the side the dragged tile will land. */
+.pl-gal-tile.pl-gal-drop-before::before,
+.pl-gal-tile.pl-gal-drop-after::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: var(--pl-accent);
+    z-index: 2;
+}
+.pl-gal-tile.pl-gal-drop-before::before { left: 0; }
+.pl-gal-tile.pl-gal-drop-after::before { right: 0; }
+
+/* ======================================================================
+   v1.10.0 — shared context-menu heading, Incarnations, image bindings
+   ====================================================================== */
+
+.pl-ctx-heading {
+    padding: 4px 10px 2px;
+    font-size: 0.7em;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    opacity: 0.55;
+}
+
+/* The menu is also opened from the chat-bar Quick Switcher popup (99997);
+   it already sits above that at 99998. */
+
+/* ---------- Incarnations: tile / Quick Switcher badges ---------- */
+
+.pl-tile-inc {
+    position: absolute;
+    bottom: 5px;
+    right: 5px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: color-mix(in srgb, #000 60%, transparent);
+    color: #fff;
+    font-size: 0.7em;
+    font-weight: 600;
+    pointer-events: none;
+}
+
+.pl-qs-inc {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--white10a, rgba(255, 255, 255, 0.1));
+    font-size: 0.72em;
+    font-weight: 600;
+    opacity: 0.85;
+}
+
+/* Long-press opens the menu on touch screens; don't select text or show the OS callout. */
+.pl-qs-row {
+    -webkit-touch-callout: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+/* ---------- Header: "use" split button (incarnation caret) + lock dropdown ---------- */
+
+/* Incarnations: no square button of its own. A slim caret segment glued to the
+   right edge of the "use" check (a split button). Tinted when the persona
+   actually has incarnations so it's noticeable without any extra text. */
+.pl-split {
+    display: flex;
+    align-items: stretch;
+}
+
+.pl-icon-btn.pl-split-main {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.pl-icon-btn.pl-inc-menu-btn {
+    width: 16px;
+    height: 34px;
+    padding: 0;
+    margin-left: -1px; /* share the main button's border */
+    border-radius: 0 8px 8px 0;
+    font-size: 0.62em;
+    opacity: 0.7;
+}
+.pl-icon-btn.pl-inc-menu-btn:hover { opacity: 1; }
+.pl-icon-btn.pl-inc-menu-btn.pl-has-incarnations {
+    opacity: 1;
+    border-color: var(--pl-accent);
+    color: var(--pl-accent);
+    background: color-mix(in srgb, var(--pl-accent) 18%, transparent);
+}
+
+/* Lock dropdown: one padlock + a small arrow replaces the three lock buttons. */
+.pl-icon-btn.pl-lock-menu-btn {
+    width: auto;
+    min-width: 34px;
+    padding: 0 7px 0 8px;
+    gap: 3px;
+}
+.pl-lockmenu-padlock {
+    width: 17px;
+    height: 17px;
+    display: block;
+    flex: 0 0 auto;
+}
+.pl-lockmenu-arrow {
+    width: 9px;
+    height: 9px;
+    display: block;
+    flex: 0 0 auto;
+    opacity: 0.8;
+}
+.pl-icon-btn.pl-lock-btn.pl-lock-dim { opacity: 0.6; }
+
+/* The lock icons reused inside the dropdown's rows: the generic
+   ".pl-ctx-item i { width: 1.2em }" rule must not stretch the glyphs nested
+   inside them (the chat lock's small badge in particular). */
+.pl-ctx-item > .pl-lock-icon-stack,
+.pl-ctx-item > .pl-lock-icon-plain {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.2em;
+    opacity: 0.85;
+}
+.pl-ctx-item .pl-lock-icon-stack > i,
+.pl-ctx-item .pl-lock-icon-plain > i { width: auto; opacity: 1; }
+.pl-ctx-item .pl-lock-icon-stack > .pl-lock-icon-badge { background: transparent; }
+
+/* On/off tick on the right of a menu row (lock dropdown). */
+.pl-ctx-item .pl-ctx-tick {
+    margin-left: auto;
+    width: auto;
+    opacity: 1;
+    color: #f5b942;
+}
+.pl-ctx-item .pl-ctx-tick.pl-ctx-tick-off { visibility: hidden; }
+.pl-ctx-item.pl-ctx-on { color: #f5b942; }
+
+/* ---------- Compare picker (chat-bar "Compare with\u2026") ---------- */
+
+.pl-pick-body { gap: 8px; }
+.pl-pick-search { width: 100%; box-sizing: border-box; }
+.pl-pick-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: min(52vh, 420px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+.pl-pick-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 5px 8px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+.pl-pick-row:hover,
+.pl-pick-row:focus-visible {
+    outline: none;
+    background: color-mix(in srgb, var(--pl-accent) 25%, transparent);
+}
+.pl-pick-thumb {
+    flex: 0 0 auto;
+    width: 34px;
+    height: 44px;
+    object-fit: cover;
+    border-radius: 5px;
+}
+.pl-pick-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.pl-pick-empty { padding: 10px; opacity: 0.65; text-align: center; }
+
+/* ---------- Generic centered dialog (new incarnation, image bindings) ---------- */
+
+.pl-dialog.pl-root {
+    position: fixed;
+    inset: 0;
+    z-index: 100000;
+    width: auto;
+    height: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    container-type: normal;
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+.pl-dialog[hidden] { display: none; }
+
+.pl-dialog-modal {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 480px;
+    max-height: 100%;
+    background: rgb(17, 18, 23);
+    border: 1px solid var(--pl-border);
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
+.pl-dialog-title {
+    flex: 0 0 auto;
+    padding: 12px 16px;
+    font-size: 1.05em;
+    font-weight: 600;
+    border-bottom: 1px solid var(--pl-border);
+}
+
+.pl-dialog-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px;
+}
+
+.pl-dialog-actions {
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--pl-border);
+}
+
+.pl-dialog-check {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.pl-dialog-check input { margin-top: 0.3em; }
+
+.pl-dialog-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-left: 4px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--pl-border);
+    background: var(--pl-surface-2);
+}
+
+.pl-dialog-copy[hidden] { display: none; }
+
+.pl-dialog-checks { display: flex; flex-direction: column; gap: 6px; }
+
+.pl-dialog-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.pl-dialog-thumb {
+    align-self: center;
+    max-height: 180px;
+    max-width: 100%;
+    border-radius: 8px;
+    object-fit: contain;
+    border: 1px solid var(--pl-border);
+}
+
+/* ---------- Gallery tab: binding / default flags on a tile ---------- */
+
+.pl-gal-flags {
+    position: absolute;
+    left: 6px;
+    top: 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    pointer-events: none;
+}
+
+.pl-gal-flag {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: color-mix(in srgb, #000 62%, transparent);
+    color: #fff;
+    font-size: 0.65em;
+    font-weight: 700;
+}
+
+.pl-gal-flag .fa-star { color: #f5b942; }
+
+/* Keep a long name from running under the incarnation badge (bottom-right). */
+.pl-tile-cell:has(.pl-tile-inc) .pl-tile-name { padding-right: 48px; }

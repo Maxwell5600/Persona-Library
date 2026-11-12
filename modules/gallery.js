@@ -28,10 +28,24 @@
  *
  * Persona: { id, name, image, description, position, depth, role,
  *            lorebook, connections: string[],
- *            created: number, lastUsed: number }
+ *            created: number, lastUsed: number, modified: number }
+ *
+ * Optional adapter members used by the newer features (each one simply
+ * hides its UI when the adapter lacks it):
+ *   getPersonaGalleryImages / reorderPersonaGalleryImages  (Gallery tab, reordering)
+ *   getPersonaSections / composeDescription / getTokenCount  (comparison window)
+ *   avatarUrl(id)        -> full-size portrait URL
+ *   getPersonaIncarnations / createPersonaIncarnation / switchPersonaIncarnation /
+ *   deletePersonaIncarnation   (Incarnations dropdown; hidden when absent)
+ *   setPersonaImageBindings / setPersonaDefaultImage   (image bindings in the Gallery tab)
  */
 
 import { newItem, newGroup, cloneNode, normalizeVariants, composeVariants, collectBindingRefs } from './variants.js';
+import { sortPersonas, createTokenCounter, isTokenSort } from './persona-sort.js';
+import { diffText } from './text-diff.js';
+import { createImageViewer } from './image-viewer.js';
+import { createContextMenu, personaMenuItems } from './persona-menu.js';
+import { onLibraryChanged, emitLibraryChanged } from './library-bridge.js';
 
 const POSITIONS = [
     ['', 'Default (In Prompt)'],
@@ -96,9 +110,30 @@ function personaImg(props, id, adapter) {
 
 const norm = (s) => (s ?? '').toString().toLowerCase();
 
-export function createPersonaLibrary(container, adapter) {
+function stripExt(filename) {
+    if (typeof filename !== 'string' || filename.length === 0) return null;
+    const i = filename.lastIndexOf('.');
+    return i >= 0 ? filename.slice(0, i) : filename;
+}
+
+const positionLabelOf = (p) => POSITIONS.find(([v]) => v === (p.position === undefined || p.position === null ? '' : String(p.position)))?.[1] ?? 'Default';
+const roleLabelOf = (p) => ROLES.find(([v]) => v === String(p.role ?? 0))?.[1] ?? 'System';
+
+/**
+ * @param {HTMLElement} container
+ * @param {object} adapter
+ * @param {{ overlay?: boolean }} [options]
+ *   overlay: build only the windows (editor, compare, incarnation dialog) —
+ *   no grid/toolbar — for the chat-bar Quick Switcher, which mounts this on
+ *   <body> so those windows open right over the chat instead of inside the
+ *   Persona Management drawer.
+ */
+export function createPersonaLibrary(container, adapter, options = {}) {
+    const overlayMode = !!options.overlay;
+    // Identity token for the cross-instance change channel (library-bridge.js).
+    const changeSource = {};
     const settings = Object.assign(
-        { sort: 'name', tile: 150, query: '' },
+        { sort: 'name', tile: 150, query: '', favorites: [], favoritesOnly: false, detailTab: 'details', scrollTop: 0 },
         adapter.getSettings?.() ?? {},
     );
 
@@ -111,11 +146,16 @@ export function createPersonaLibrary(container, adapter) {
     // Working copy of the Variants tree (see modules/variants.js), same
     // reload-on-select lifecycle as sectionsDraft.
     let variantsDraft = null;
-    // 'details' (read-only, CharLib-style) or 'edit' (the form). Resets to
-    // 'details' whenever a different persona is opened.
-    let detailTab = 'details';
+    // 'details' (read-only, CharLib-style), 'edit' (the form), 'preview' or
+    // 'gallery'. Remembered: opening another persona keeps whichever tab you
+    // were on, and it survives a reload (see setDetailTab / validTab).
+    let detailTab = settings.detailTab || 'details';
+    // Persona id the "Compare with\u2026" menu entry was used on, while the
+    // gallery waits for a second persona to be picked; null otherwise.
+    let compareFrom = null;
 
     const root = el('div', { class: 'pl-root', 'data-persona-library': '' });
+    if (overlayMode) root.style.display = 'none'; // windows only — nothing to show in the host itself
     container.append(root);
 
     // -- toolbar (built once, kept alive so the search box never loses focus) --
@@ -135,8 +175,21 @@ export function createPersonaLibrary(container, adapter) {
         el('option', { value: 'name-desc', text: 'Name (Z\u2013A)' }),
         el('option', { value: 'recent', text: 'Recently used' }),
         el('option', { value: 'created', text: 'Recently created' }),
+        el('option', { value: 'modified', text: 'Recently modified' }),
+        el('option', { value: 'tokens-desc', text: 'Token count (highest first)' }),
+        el('option', { value: 'tokens-asc', text: 'Token count (lowest first)' }),
+        el('option', { value: 'favorites', text: 'Favorites first' }),
     ]);
     sort.value = settings.sort;
+    if (sort.value !== settings.sort) { sort.value = 'name'; settings.sort = 'name'; } // unknown/legacy saved value
+
+    // Only shown once at least one persona is a favorite, so people who never
+    // use favorites never see another toolbar button.
+    const favFilterBtn = el('button', {
+        class: 'pl-icon-btn pl-fav-filter', type: 'button', hidden: true,
+        title: 'Show favorites only',
+        onclick: () => { persist({ favoritesOnly: !settings.favoritesOnly }); renderGrid(); },
+    }, [el('i', { class: 'fa-solid fa-star' })]);
 
     const size = el('input', {
         class: 'pl-size',
@@ -384,29 +437,13 @@ export function createPersonaLibrary(container, adapter) {
         if (e.target === detail) closeDetail();
     });
 
-    // -- click-to-enlarge lightbox for the hero image, above the detail modal --
-    const lightboxImg = el('img', { class: 'pl-lightbox-img', alt: '' });
-    const lightboxClose = el('button', {
-        class: 'pl-lightbox-close', type: 'button', title: 'Close',
-        onclick: () => closeLightbox(),
-    }, [el('i', { class: 'fa-solid fa-xmark' })]);
-    const lightbox = el('div', { class: 'pl-lightbox pl-root', hidden: true }, [lightboxClose, lightboxImg]);
-    lightbox.addEventListener('click', (e) => {
-        if (e.target === lightbox) closeLightbox();
-    });
-    function openLightbox(src, alt) {
-        lightboxImg.src = src;
-        lightboxImg.alt = alt ?? '';
-        lightbox.hidden = false;
+    // -- image viewer (zoom / pan lightbox), above the detail modal --
+    // See modules/image-viewer.js. It shows exactly the URL it is given, so
+    // callers pass ORIGINAL files, never thumbnails (see originalPortraitUrl).
+    const viewer = createImageViewer(container);
+    function openLightbox(src, alt, fallbackSrc) {
+        viewer.open({ src, alt, fallbackSrc });
     }
-    function closeLightbox() {
-        lightbox.hidden = true;
-        lightboxImg.src = '';
-    }
-    const onLightboxKeydown = (e) => {
-        if (e.key === 'Escape' && !lightbox.hidden) closeLightbox();
-    };
-    document.addEventListener('keydown', onLightboxKeydown);
 
     // -- "expand to full screen" editor for a long single-line/text field --
     // Deliberately NOT the Core/Custom-section drag-to-resize handle: that
@@ -497,11 +534,18 @@ export function createPersonaLibrary(container, adapter) {
     // wholesale — on document.body it sat outside that rule and could stay
     // floating on top of the native UI while switched over.
     container.appendChild(detail);
-    container.appendChild(lightbox);
     container.appendChild(textFocus);
 
+    // Slim hint shown only while "Compare with\u2026" is waiting for a second pick.
+    const compareBarText = el('span', { class: 'pl-compare-bar-text' });
+    const compareBar = el('div', { class: 'pl-compare-bar', hidden: true }, [
+        compareBarText,
+        el('button', { class: 'pl-btn', type: 'button', text: 'Cancel', onclick: () => cancelCompare() }),
+    ]);
+
     root.append(
-        el('div', { class: 'pl-toolbar' }, [newBtn, search, sort, size, count, loreBtn].filter(Boolean)),
+        el('div', { class: 'pl-toolbar' }, [newBtn, search, sort, favFilterBtn, size, count, loreBtn].filter(Boolean)),
+        compareBar,
         el('div', { class: 'pl-body' }, [gridWrap]),
     );
 
@@ -510,24 +554,106 @@ export function createPersonaLibrary(container, adapter) {
         try { adapter.saveSettings?.(patch); } catch (e) { console.warn('[PersonaLibrary] saveSettings failed', e); }
     }
 
-    function visiblePersonas() {
-        const all = adapter.getPersonas() ?? [];
-        const q = norm(settings.query).trim();
-        let list = all.filter((p) => {
-            if (!q) return true;
-            return norm(p.name).includes(q) || norm(p.description).includes(q);
-        });
-        const by = {
-            'name': (a, b) => norm(a.name).localeCompare(norm(b.name)),
-            'name-desc': (a, b) => norm(b.name).localeCompare(norm(a.name)),
-            'recent': (a, b) => (b.lastUsed ?? 0) - (a.lastUsed ?? 0),
-            'created': (a, b) => (b.created ?? 0) - (a.created ?? 0),
-        }[settings.sort] ?? (() => 0);
-        list = list.slice().sort(by);
-        return list;
+    // Shared with the Quick Switcher's sorting (see modules/persona-sort.js):
+    // one comparator and one async token-count cache for both.
+    const tokenCounter = createTokenCounter();
+
+    // -- favorites: a list of persona ids in the extension's own settings --
+    // Read from the saved settings every time (not just this instance's
+    // startup copy) because the chat-bar overlay instance can change them too.
+    const favoriteSet = () => {
+        const live = adapter.getSettings?.()?.favorites;
+        const list = Array.isArray(live) ? live : settings.favorites;
+        return new Set(Array.isArray(list) ? list : []);
+    };
+
+    function toggleFavorite(id) {
+        const favs = favoriteSet();
+        if (favs.has(id)) favs.delete(id); else favs.add(id);
+        persist({ favorites: [...favs] });
+        renderGrid();
+        emitLibraryChanged(changeSource);
     }
 
+    // -- detail tab: remembered, but never to a tab this adapter can't show --
+    const validTab = (tab) => {
+        if (tab === 'edit') return typeof adapter.updatePersona === 'function' ? 'edit' : 'details';
+        if (tab === 'gallery') return typeof adapter.getPersonaGalleryImages === 'function' ? 'gallery' : 'details';
+        return tab === 'preview' ? 'preview' : 'details';
+    };
+    function setDetailTab(tab) {
+        detailTab = validTab(tab);
+        persist({ detailTab });
+    }
+
+    function visiblePersonas() {
+        const all = adapter.getPersonas() ?? [];
+        // The overlay has no search box / favorites filter, so its ‹ › stepping
+        // cycles through everyone rather than a stale copy of the gallery's filter.
+        const q = overlayMode ? '' : norm(settings.query).trim();
+        const favs = favoriteSet();
+        const list = all.filter((p) => {
+            if (!overlayMode && settings.favoritesOnly && !favs.has(p.id)) return false;
+            if (!q) return true;
+            if (norm(p.name).includes(q) || norm(p.description).includes(q)) return true;
+            // Searching "Steve M" should still find Steve, whichever incarnation is live.
+            return !!adapter.getPersonaIncarnations?.(p.id)?.list?.some((inc) => norm(inc.name).includes(q));
+        });
+        return sortPersonas(list, settings.sort, {
+            activeId: adapter.getActiveId?.() ?? null,
+            favorites: favs,
+            tokensOf: (p) => tokenCounter.get(p),
+        });
+    }
+
+    // -- remembered scroll position --------------------------------------
+    // The grid's scroll offset is lost whenever its drawer is hidden
+    // (display:none), so it is restored once the grid is visible again, not
+    // just once at startup. Scroll events are ignored while a restore is
+    // pending so the reset-to-0 can never overwrite the remembered value.
+    let savedScroll = Number(settings.scrollTop) || 0;
+    let restorePending = savedScroll > 0;
+    let scrollTimer = null;
+
+    function applyScrollRestore() {
+        if (!restorePending || !gridWrap.clientHeight || !grid.childElementCount || !gridWrap.contains(grid)) return;
+        restorePending = false;
+        gridWrap.scrollTop = savedScroll;
+    }
+
+    gridWrap.addEventListener('scroll', () => {
+        if (restorePending || !gridWrap.clientHeight) return;
+        savedScroll = gridWrap.scrollTop;
+        clearTimeout(scrollTimer);
+        scrollTimer = setTimeout(() => persist({ scrollTop: Math.round(savedScroll) }), 500);
+    }, { passive: true });
+
+    let gridWasHidden = !gridWrap.clientHeight;
+    const gridObserver = typeof ResizeObserver === 'function'
+        ? new ResizeObserver(() => {
+            const visible = gridWrap.clientHeight > 0;
+            if (visible && gridWasHidden && savedScroll > 0) restorePending = true;
+            gridWasHidden = !visible;
+            applyScrollRestore();
+        })
+        : null;
+    gridObserver?.observe(gridWrap);
+
     function renderGrid() {
+        if (overlayMode) return; // no grid in the chat-bar overlay
+        const all = adapter.getPersonas() ?? [];
+        const favs = favoriteSet();
+        const favCount = all.reduce((n, p) => n + (favs.has(p.id) ? 1 : 0), 0);
+        // The filter can't outlive its last favorite (e.g. it was deleted).
+        if (!favCount && settings.favoritesOnly) persist({ favoritesOnly: false });
+        favFilterBtn.hidden = !favCount;
+        favFilterBtn.classList.toggle('pl-icon-active', !!settings.favoritesOnly);
+        favFilterBtn.setAttribute('aria-pressed', settings.favoritesOnly ? 'true' : 'false');
+        favFilterBtn.title = settings.favoritesOnly ? 'Showing favorites only — click to show everyone' : 'Show favorites only';
+        // Resolve token counts only when they're actually the sort key; the
+        // counter re-renders once when they land and never loops.
+        if (isTokenSort(settings.sort)) tokenCounter.ensure(all, adapter, () => renderGrid());
+
         const list = visiblePersonas();
         const activeId = adapter.getActiveId?.() ?? null;
         const scrollTop = gridWrap.scrollTop;
@@ -537,26 +663,57 @@ export function createPersonaLibrary(container, adapter) {
         if (!list.length) {
             gridWrap.replaceChildren(el('div', {
                 class: 'pl-empty',
-                text: (adapter.getPersonas() ?? []).length ? 'No personas match your filters.' : 'No personas yet.',
+                text: all.length ? 'No personas match your filters.' : 'No personas yet.',
             }));
             return;
         }
         if (!gridWrap.contains(grid)) gridWrap.replaceChildren(grid);
 
         for (const p of list) {
+            const fav = favs.has(p.id);
             const tile = el('button', {
-                class: `pl-tile${p.id === selectedId ? ' pl-selected' : ''}${p.id === activeId ? ' pl-active' : ''}`,
+                class: `pl-tile${p.id === selectedId ? ' pl-selected' : ''}${p.id === activeId ? ' pl-active' : ''}${p.id === compareFrom ? ' pl-compare-source' : ''}`,
                 type: 'button',
-                title: p.name,
-                onclick: () => select(p.id),
-                ondblclick: () => use(p.id),
+                title: p.incarnationCount > 1 ? `${p.name} \u00b7 ${p.incarnationCount} incarnations` : p.name,
+                onclick: () => (compareFrom ? finishCompare(p.id) : select(p.id)),
+                ondblclick: () => { if (!compareFrom) use(p.id); },
             }, [
                 personaImg({ alt: p.name, loading: 'lazy', decoding: 'async', src: p.image }, p.id, adapter),
                 el('span', { class: 'pl-tile-name', text: p.name }),
             ]);
-            grid.append(tile);
+            // The "more" indicator: three white dots on hover (so people know
+            // a menu is there), or three little yellow stars once the persona
+            // is a favorite. Either way a click opens the same menu as a
+            // right-click, where favoriting lives. A sibling of the tile, not
+            // a child: a <button> inside a <button> is invalid and unreliable
+            // across browsers. Inline SVG so it never depends on icon fonts.
+            const STAR = 'M5 .6l1.2 2.9 3.1.3-2.4 2 .8 3.1L5 7.4 2.3 8.9l.8-3.1-2.4-2 3.1-.3z';
+            const star = el('button', {
+                class: `pl-tile-star${fav ? ' pl-fav' : ''}`, type: 'button',
+                title: fav ? 'Favorite \u2014 click for menu' : 'More actions',
+                'aria-haspopup': 'menu',
+                onclick: (e) => { e.stopPropagation(); openTileMenu(e, p); },
+            });
+            // Stars are drawn ~1.3x their box so a star carries the same visual
+            // weight as a solid dot (a star fills far less of its bounding box).
+            const STAR_AT = (cy) => `<path transform="translate(7 ${cy}) scale(1.28) translate(-5 -4.75)" d="${STAR}"/>`;
+            star.innerHTML = `<svg viewBox="0 0 14 44" width="7" height="22" aria-hidden="true" fill="currentColor">${fav
+                ? [7, 22, 37].map(STAR_AT).join('')
+                : [7, 22, 37].map((cy) => `<circle cx="7" cy="${cy}" r="3.7"/>`).join('')}</svg>`;
+            // Shown only for personas that actually have incarnations. A
+            // sibling (like the star) and non-interactive, so it never
+            // changes how the tile itself is clicked.
+            const incBadge = p.incarnationCount > 1 && el('span', {
+                class: 'pl-tile-inc',
+                title: `${p.incarnationCount} incarnations${p.incarnationOriginalName ? ` of ${p.incarnationOriginalName}` : ''}`,
+            }, [el('i', { class: 'fa-solid fa-layer-group' }), el('span', { text: String(p.incarnationCount) })]);
+            grid.append(el('div', {
+                class: 'pl-tile-cell',
+                oncontextmenu: (e) => openTileMenu(e, p),
+            }, [tile, star, incBadge]));
         }
-        gridWrap.scrollTop = scrollTop;
+        if (restorePending) applyScrollRestore();
+        else gridWrap.scrollTop = scrollTop;
     }
 
     function select(id) {
@@ -568,9 +725,15 @@ export function createPersonaLibrary(container, adapter) {
         selectedId = id;
         sectionsDraft = null; // force a fresh reload for the newly selected persona
         variantsDraft = null;
-        detailTab = 'details';
+        detailTab = validTab(detailTab); // keep the last-used tab
         renderGrid();
         renderDetail();
+    }
+
+    /** Opens a persona's detail view straight onto `tab` (also remembered). */
+    function openPersona(id, tab) {
+        if (tab) setDetailTab(tab);
+        select(id);
     }
 
     function step(delta) {
@@ -592,7 +755,462 @@ export function createPersonaLibrary(container, adapter) {
             globalThis.toastr?.error?.(note, 'Persona Library');
         }
         refresh();
+        emitLibraryChanged(changeSource);
     }
+
+    /**
+     * Runs a persona action with the standard toast + refresh handling.
+     * Shared by the detail view's buttons and the tile right-click menu so
+     * both behave identically.
+     */
+    async function runAction(fn, ok, fail, { forceRerender = false } = {}) {
+        try {
+            await fn();
+            note = ok;
+            dirty = false;
+            globalThis.toastr?.success?.(ok, 'Persona Library');
+        } catch (e) {
+            console.error('[PersonaLibrary]', e);
+            note = fail;
+            globalThis.toastr?.error?.(fail, 'Persona Library');
+        }
+        if (forceRerender) lastFingerprint = null;
+        refresh();
+        emitLibraryChanged(changeSource);
+    }
+
+    const duplicateFlow = (p) => runAction(() => adapter.duplicatePersona(p.id), 'Duplicated.', 'Could not duplicate.');
+
+    async function deleteFlow(p) {
+        const ask = adapter.confirm ?? (async (m) => window.confirm(m));
+        const galCount = adapter.getPersonaGalleryImages?.(p.id)?.images?.length ?? 0;
+        const galNote = galCount ? ` Its ${galCount} gallery image${galCount === 1 ? '' : 's'} will be deleted too.` : '';
+        if (!await ask(`Delete persona "${p.name}"?${galNote} This cannot be undone.`)) return;
+        if (selectedId === p.id) selectedId = null;
+        await runAction(async () => {
+            await adapter.deletePersona(p.id);
+            // Only after the persona itself is gone; failure here is harmless.
+            try { await adapter.deletePersonaGallery?.(p.id); } catch (e) { console.warn('[PersonaLibrary] gallery cleanup failed', e); }
+            if (favoriteSet().has(p.id)) persist({ favorites: [...favoriteSet()].filter((id) => id !== p.id) });
+        }, 'Deleted.', 'Could not delete.');
+    }
+
+    // -- right-click menu on a gallery tile --------------------------------
+    // The menu itself (rendering, positioning, keyboard handling) and its
+    // item list live in persona-menu.js and are shared with the chat-bar
+    // Quick Switcher; this just says what each action does HERE. Mounted on
+    // `container` like the other overlays (see the note above
+    // container.appendChild(detail)) so SillyTavern doesn't treat a click on
+    // it as a click outside its drawer.
+    const ctxMenu = createContextMenu(container);
+    const closeMenu = () => ctxMenu.close();
+
+    const menuActions = {
+        use: (p) => use(p.id),
+        edit: typeof adapter.updatePersona === 'function' ? (p) => openPersona(p.id, 'edit') : null,
+        duplicate: adapter.duplicatePersona ? (p) => duplicateFlow(p) : null,
+        gallery: adapter.getPersonaGalleryImages ? (p) => openPersona(p.id, 'gallery') : null,
+        toggleFavorite: (p) => toggleFavorite(p.id),
+        compare: (p) => startCompare(p.id),
+        remove: adapter.deletePersona ? (p) => deleteFlow(p) : null,
+        switchIncarnation: adapter.switchPersonaIncarnation ? (p, key) => switchIncarnationFlow(p.id, key) : null,
+        manageIncarnations: adapter.createPersonaIncarnation ? (p) => manageIncarnations(p.id) : null,
+    };
+
+    function openTileMenu(e, p) {
+        e.preventDefault();
+        ctxMenu.open({
+            x: e.clientX,
+            y: e.clientY,
+            anchorRect: e.currentTarget.getBoundingClientRect(),
+            items: personaMenuItems(p, {
+                isActive: p.id === (adapter.getActiveId?.() ?? null),
+                isFav: favoriteSet().has(p.id),
+                canCompare: (adapter.getPersonas() ?? []).length > 1,
+                incarnations: adapter.getPersonaIncarnations?.(p.id) ?? null,
+                actions: menuActions,
+            }),
+            extraDismissTargets: [gridWrap],
+        });
+    }
+
+    // -- generic centered dialog (Incarnations, image bindings) ------------
+    const dialog = el('div', { class: 'pl-dialog pl-root', hidden: true });
+    container.appendChild(dialog);
+    let dialogBusy = false;
+    const closeDialog = () => {
+        if (dialogBusy) return;
+        dialog.hidden = true;
+        dialog.replaceChildren();
+    };
+    dialog.addEventListener('click', (e) => { if (e.target === dialog) closeDialog(); });
+    const onDialogKey = (e) => { if (e.key === 'Escape' && !dialog.hidden) { e.stopPropagation(); closeDialog(); } };
+    document.addEventListener('keydown', onDialogKey, true);
+    function openDialog(content) {
+        dialog.replaceChildren(content);
+        dialog.hidden = false;
+    }
+
+    // -- Incarnations -------------------------------------------------------
+    // See the big comment above "Persona Incarnations" in st-adapter.js. The
+    // live incarnation is the persona's ordinary data, so everything in the
+    // detail view (Details / Edit / Preview / Gallery) always shows and edits
+    // whichever incarnation is currently selected in the bar.
+    const askConfirm = (m) => (adapter.confirm ?? (async (msg) => window.confirm(msg)))(m);
+    let incBusy = false;
+
+    async function confirmDiscardIfDirty(id) {
+        if (id !== selectedId || !dirty) return true;
+        return Boolean(await askConfirm('You have unsaved changes. Discard them?'));
+    }
+
+    /** Runs an incarnation operation with the standard guards, toasts and a full redraw. */
+    async function incarnationAction(id, fn, ok, fail, { skipDirtyCheck = false } = {}) {
+        if (incBusy) return false;
+        if (!skipDirtyCheck && !(await confirmDiscardIfDirty(id))) return false;
+        incBusy = true;
+        let success = false;
+        // The data is about to change underneath any open drafts; drop them
+        // now so no render in the middle of the operation can show (or later
+        // save) the old incarnation's text against the new one.
+        if (id === selectedId) { sectionsDraft = null; variantsDraft = null; }
+        try {
+            await fn();
+            success = true;
+            if (id === selectedId) dirty = false;
+            globalThis.toastr?.success?.(ok, 'Persona Library');
+        } catch (e) {
+            console.error('[PersonaLibrary] incarnation', e);
+            globalThis.toastr?.error?.(`${fail} ${e?.message ?? ''}`.trim(), 'Persona Library');
+        } finally {
+            incBusy = false;
+        }
+        // The persona's data changed underneath any open drafts — reload them.
+        if (id === selectedId) { sectionsDraft = null; variantsDraft = null; }
+        note = '';
+        lastFingerprint = null;
+        refresh();
+        emitLibraryChanged(changeSource);
+        return success;
+    }
+
+    const switchIncarnationFlow = (id, key) => incarnationAction(
+        id, () => adapter.switchPersonaIncarnation(id, key), 'Switched incarnation.', 'Could not switch incarnation.',
+    );
+
+    async function deleteIncarnationFlow(p, inc) {
+        const n = inc.imageCount ? ` and ${inc.imageCount} gallery image${inc.imageCount === 1 ? '' : 's'}` : '';
+        const back = inc.active ? ' You will be returned to the original.' : '';
+        if (!await askConfirm(`Delete incarnation \u201c${inc.name}\u201d? Its description, sections, variants, bindings${n} are deleted permanently.${back} The original and any other incarnations are not affected.`)) return;
+        await incarnationAction(p.id, () => adapter.deletePersonaIncarnation(p.id, inc.key), 'Incarnation deleted.', 'Could not delete incarnation.', { skipDirtyCheck: !inc.active });
+    }
+
+    /** "Manage incarnations…" / "Add incarnation…" from a menu. */
+    function manageIncarnations(id) {
+        openPersona(id);
+        if (!adapter.getPersonaIncarnations?.(id)) openIncarnationDialog(id);
+    }
+
+    async function openIncarnationDialog(id) {
+        if (!adapter.createPersonaIncarnation) return;
+        const p = (adapter.getPersonas() ?? []).find((x) => x.id === id);
+        if (!p) return;
+        if (!await confirmDiscardIfDirty(id)) return;
+        const info = adapter.getPersonaIncarnations?.(id) ?? null;
+
+        const nameInput = el('input', { type: 'text', class: 'pl-name-input', placeholder: `e.g. ${p.name} Z`, maxlength: '120' });
+        const modeBlank = el('input', { type: 'radio', name: 'pl-inc-mode', value: 'blank', checked: true });
+        const modeCopy = el('input', { type: 'radio', name: 'pl-inc-mode', value: 'copy' });
+        const COPY_OPTIONS = [
+            ['core', 'Core description', true],
+            ['sections', 'Additional sections (appearance, personality, etc.)', true],
+            ['variants', 'Variants', true],
+            ['images', 'Portrait & image gallery', true],
+            ['settings', 'Injection position, depth, role & lorebook', true],
+        ];
+        const checks = Object.fromEntries(COPY_OPTIONS.map(([k, , on]) => [k, el('input', { type: 'checkbox', checked: on })]));
+        const sourceSelect = info && el('select', { class: 'pl-select' }, info.list.map((inc) => el('option', { value: inc.key, text: inc.name, selected: inc.active })));
+        const copyBox = el('div', { class: 'pl-dialog-copy', hidden: true }, [
+            sourceSelect && el('div', { class: 'pl-field' }, [el('label', { text: 'Copy from' }), sourceSelect]),
+            el('div', { class: 'pl-dialog-checks' }, COPY_OPTIONS.map(([k, label]) => el('label', { class: 'pl-dialog-check' }, [checks[k], el('span', { text: label })]))),
+            el('div', { class: 'pl-sections-hint', text: 'This is a one-time copy. Once created, the new incarnation is completely independent — editing either one never changes the other. Character connections and bindings are not copied.' }),
+        ].filter(Boolean));
+        const syncMode = () => { copyBox.hidden = !modeCopy.checked; };
+        modeBlank.addEventListener('change', syncMode);
+        modeCopy.addEventListener('change', syncMode);
+
+        const createBtn = el('button', { class: 'pl-btn pl-primary', type: 'button', text: 'Create & switch' });
+        const cancelBtn = el('button', { class: 'pl-btn', type: 'button', text: 'Cancel', onclick: () => closeDialog() });
+        createBtn.onclick = async () => {
+            const name = nameInput.value.trim();
+            if (!name) { globalThis.toastr?.warning?.('Give the incarnation a name.', 'Persona Library'); nameInput.focus(); return; }
+            const copy = modeCopy.checked ? Object.fromEntries(COPY_OPTIONS.map(([k]) => [k, checks[k].checked])) : null;
+            dialogBusy = true;
+            createBtn.disabled = true; cancelBtn.disabled = true;
+            createBtn.textContent = 'Creating\u2026';
+            const okd = await incarnationAction(id,
+                () => adapter.createPersonaIncarnation(id, { name, sourceKey: sourceSelect?.value, copy }),
+                'Incarnation created.', 'Could not create incarnation.', { skipDirtyCheck: true });
+            dialogBusy = false;
+            if (okd) closeDialog();
+            else { createBtn.disabled = false; cancelBtn.disabled = false; createBtn.textContent = 'Create & switch'; }
+        };
+        nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') createBtn.click(); });
+
+        openDialog(el('div', { class: 'pl-dialog-modal' }, [
+            el('div', { class: 'pl-dialog-title', text: `New incarnation of \u201c${info?.list?.find((x) => x.isOriginal)?.name ?? p.name}\u201d` }),
+            el('div', { class: 'pl-dialog-body' }, [
+                el('div', { class: 'pl-field' }, [el('label', { text: 'Name' }), nameInput]),
+                el('label', { class: 'pl-dialog-check' }, [modeBlank, el('span', { text: 'Start with a blank slate' })]),
+                el('label', { class: 'pl-dialog-check' }, [modeCopy, el('span', { text: 'Copy from an existing incarnation' })]),
+                copyBox,
+            ]),
+            el('div', { class: 'pl-dialog-actions' }, [cancelBtn, createBtn]),
+        ]));
+        nameInput.focus();
+    }
+
+    /**
+     * Minimal incarnation switcher: a slim caret attached to the right of the
+     * "Use this persona" check in the detail header (a split button) that opens
+     * a dropdown (the same menu component as the right-click menus) to switch,
+     * add or delete incarnations. No bar, no pills, no extra square.
+     * The button is tinted when the persona actually has incarnations so it's
+     * easy to notice without adding any text.
+     */
+    function buildIncarnationMenuBtn(p) {
+        const info = adapter.getPersonaIncarnations?.(p.id) ?? null;
+        const count = info?.list?.length ?? 0;
+        const activeName = info?.list?.find((i) => i.active)?.name ?? '';
+        const btn = el('button', {
+            class: `pl-icon-btn pl-inc-menu-btn${count > 1 ? ' pl-has-incarnations' : ''}`, type: 'button',
+            title: count > 1 ? `Incarnations (${count}) \u00b7 showing \u201c${activeName}\u201d` : 'Incarnations \u2014 add a separate version of this persona',
+            'aria-haspopup': 'menu',
+        }, [el('i', { class: 'fa-solid fa-caret-down' })]);
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const fresh = adapter.getPersonaIncarnations?.(p.id) ?? null;
+            const r = btn.getBoundingClientRect();
+            const items = [{ title: 'Incarnations' }];
+            for (const inc of fresh?.list ?? []) {
+                items.push({
+                    icon: inc.active ? 'fa-circle-dot' : 'fa-circle',
+                    label: inc.isOriginal ? `${inc.name} (original)` : inc.name,
+                    disabled: inc.active,
+                    onClick: () => switchIncarnationFlow(p.id, inc.key),
+                });
+            }
+            if (fresh?.list?.length) items.push('sep');
+            items.push({ icon: 'fa-plus', label: 'New incarnation\u2026', onClick: () => openIncarnationDialog(p.id) });
+            const deletable = (fresh?.list ?? []).filter((i) => !i.isOriginal);
+            if (deletable.length) {
+                items.push('sep');
+                for (const inc of deletable) {
+                    items.push({ icon: 'fa-trash', label: `Delete \u201c${inc.name}\u201d\u2026`, danger: true, onClick: () => deleteIncarnationFlow(p, inc) });
+                }
+            }
+            ctxMenu.open({ x: r.left, y: r.bottom + 4, anchorRect: r, items });
+        });
+        return btn;
+    }
+
+    // -- comparison: pick two personas, inspect them side by side ----------
+    // Deliberately a read-only window, not an editor. Entered from a tile's
+    // right-click menu ("Compare with…") and then a click on a second
+    // tile; either side can be changed (or the two swapped) once it's open.
+    const cmp = el('div', { class: 'pl-compare pl-root', hidden: true });
+    container.appendChild(cmp);
+    cmp.addEventListener('click', (e) => { if (e.target === cmp) closeCompare(); });
+    let cmpIds = [null, null];
+    let cmpRun = 0; // guards async token counts against a newer render
+
+    /**
+     * Chat-bar flow: there's no grid to click a second persona in, so show a
+     * searchable list to pick from, then open the compare window. (The gallery
+     * keeps its own "click another tile" flow, below.)
+     */
+    function openComparePicker(id) {
+        const all = adapter.getPersonas() ?? [];
+        const src = all.find((x) => x.id === id);
+        if (!src || all.length < 2) return;
+        const activeId = adapter.getActiveId?.() ?? null;
+        const others = sortPersonas(all.filter((x) => x.id !== id), 'name');
+
+        const search = el('input', { type: 'search', class: 'pl-search pl-pick-search', placeholder: 'Search personas…' });
+        const listEl = el('div', { class: 'pl-pick-list' });
+        const pick = (otherId) => { closeDialog(); openCompare(id, otherId); };
+        const renderPickList = () => {
+            const q = norm(search.value).trim();
+            const rows = others.filter((x) => !q || norm(x.name).includes(q));
+            listEl.replaceChildren(...(rows.length ? rows.map((x) => el('button', {
+                class: 'pl-pick-row', type: 'button', onclick: () => pick(x.id),
+            }, [
+                personaImg({ class: 'pl-pick-thumb', alt: x.name, loading: 'lazy', decoding: 'async', src: x.image }, x.id, adapter),
+                el('span', { class: 'pl-pick-name', text: x.name }),
+                x.id === activeId ? el('span', { class: 'pl-active-pill', text: 'ACTIVE' }) : null,
+            ].filter(Boolean))) : [el('div', { class: 'pl-pick-empty', text: 'No personas match.' })]));
+        };
+        search.addEventListener('input', renderPickList);
+        search.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') listEl.querySelector('.pl-pick-row')?.click();
+        });
+        renderPickList();
+
+        openDialog(el('div', { class: 'pl-dialog-modal' }, [
+            el('div', { class: 'pl-dialog-title', text: `Compare “${src.name}” with…` }),
+            el('div', { class: 'pl-dialog-body pl-pick-body' }, [search, listEl]),
+            el('div', { class: 'pl-dialog-actions' }, [el('button', { class: 'pl-btn', type: 'button', text: 'Cancel', onclick: () => closeDialog() })]),
+        ]));
+        search.focus();
+    }
+
+    function startCompare(id) {
+        if (overlayMode) { openComparePicker(id); return; }
+        const p = (adapter.getPersonas() ?? []).find((x) => x.id === id);
+        compareFrom = id;
+        compareBarText.textContent = `Comparing “${p?.name ?? id}” — click another persona to compare it with.`;
+        compareBar.hidden = false;
+        renderGrid();
+    }
+
+    function cancelCompare() {
+        compareFrom = null;
+        compareBar.hidden = true;
+        renderGrid();
+    }
+
+    function finishCompare(id) {
+        if (id === compareFrom) {
+            globalThis.toastr?.info?.('Pick a different persona to compare with.', 'Persona Library');
+            return;
+        }
+        const first = compareFrom;
+        cancelCompare();
+        openCompare(first, id);
+    }
+
+    function openCompare(aId, bId) {
+        cmpIds = [aId, bId];
+        cmp.hidden = false;
+        renderCompare();
+    }
+
+    function closeCompare() {
+        cmpRun++;
+        cmp.hidden = true;
+        cmp.replaceChildren();
+    }
+
+    /** The text a persona actually injects (core + enabled sections), plus those sections' names. */
+    function composedFor(p) {
+        const data = adapter.getPersonaSections?.(p.id) ?? { core: p.description ?? '', sections: [] };
+        const text = adapter.composeDescription
+            ? adapter.composeDescription(data.core ?? '', data.sections ?? [])
+            : (data.core ?? '');
+        const sections = (data.sections ?? []).filter((x) => x.enabled && (x.content ?? '').trim()).map((x) => x.title || 'Section');
+        return { text, sections };
+    }
+
+    function renderCompare() {
+        const all = adapter.getPersonas() ?? [];
+        const pa = all.find((x) => x.id === cmpIds[0]);
+        const pb = all.find((x) => x.id === cmpIds[1]);
+        if (!pa || !pb) { closeCompare(); return; }
+        const run = ++cmpRun;
+        const A = { p: pa, ...composedFor(pa) };
+        const B = { p: pb, ...composedFor(pb) };
+        const byName = sortPersonas(all, 'name');
+
+        const grid = el('div', { class: 'pl-cmp-grid' });
+
+        const headCell = (side, idx) => {
+            const sel = el('select', {
+                class: 'pl-select pl-cmp-select', title: 'Choose a persona',
+                onchange: () => { cmpIds[idx] = sel.value; renderCompare(); },
+            }, byName.map((x) => el('option', { value: x.id, text: x.name })));
+            sel.value = cmpIds[idx];
+            return el('div', { class: 'pl-cmp-cell pl-cmp-head' }, [
+                personaImg({ class: 'pl-cmp-thumb', alt: side.p.name, src: side.p.image }, side.p.id, adapter),
+                sel,
+            ]);
+        };
+        grid.append(headCell(A, 0), headCell(B, 1));
+
+        const fact = (label, va, vb) => {
+            const mk = (v) => el('div', { class: 'pl-cmp-cell pl-cmp-fact' }, [
+                el('span', { class: 'pl-cmp-label', text: label }),
+                el('span', { class: 'pl-cmp-value', text: v }),
+            ]);
+            const cells = [mk(va), mk(vb)];
+            if (va !== vb) cells.forEach((c) => c.classList.add('pl-cmp-diff'));
+            grid.append(...cells);
+            return cells;
+        };
+        const dateOf = (ts) => (Number(ts) > 1e12 ? new Date(Number(ts)).toLocaleString() : '—');
+
+        const [tokA, tokB] = fact('Tokens', '…', '…');
+        fact('Characters', A.text.length.toLocaleString(), B.text.length.toLocaleString());
+        fact('Injection', positionLabelOf(pa), positionLabelOf(pb));
+        fact('Depth', String(pa.depth ?? 2), String(pb.depth ?? 2));
+        fact('Role', roleLabelOf(pa), roleLabelOf(pb));
+        fact('Lorebook', pa.lorebook || 'none', pb.lorebook || 'none');
+        fact('Sections', A.sections.join(', ') || 'none', B.sections.join(', ') || 'none');
+        fact('Modified', dateOf(pa.modified), dateOf(pb.modified));
+
+        if (typeof adapter.getTokenCount === 'function') {
+            Promise.all([adapter.getTokenCount(A.text), adapter.getTokenCount(B.text)]).then(([na, nb]) => {
+                if (run !== cmpRun) return;
+                const set = (cell, t) => { cell.querySelector('.pl-cmp-value').textContent = t; };
+                const d = nb - na;
+                set(tokA, `~${na.toLocaleString()}`);
+                set(tokB, `~${nb.toLocaleString()}${d ? ` (${d > 0 ? '+' : '−'}${Math.abs(d).toLocaleString()})` : ''}`);
+                if (d) { tokA.classList.add('pl-cmp-diff'); tokB.classList.add('pl-cmp-diff'); }
+            }).catch(() => {
+                if (run !== cmpRun) return;
+                tokA.querySelector('.pl-cmp-value').textContent = '?';
+                tokB.querySelector('.pl-cmp-value').textContent = '?';
+            });
+        }
+
+        const diff = diffText(A.text, B.text);
+        grid.append(el('div', {
+            class: 'pl-cmp-wide pl-cmp-section-title',
+            text: diff.identical ? 'Description — identical' : 'Description — differing words are highlighted',
+        }));
+        const pane = (segments, text) => {
+            const box = el('div', { class: 'pl-cmp-cell pl-cmp-text' });
+            if (!text.trim()) { box.append(el('span', { class: 'pl-cmp-empty', text: '(empty)' })); return box; }
+            for (const sg of segments) box.append(sg.changed ? el('mark', { class: 'pl-cmp-mark', text: sg.text }) : document.createTextNode(sg.text));
+            return box;
+        };
+        grid.append(pane(diff.a, A.text), pane(diff.b, B.text));
+        grid.append(el('div', {
+            class: 'pl-cmp-wide pl-sections-hint',
+            text: 'Compares what actually gets injected: the core description plus enabled sections. Variants only apply while generating, so they aren’t included.',
+        }));
+
+        const header = el('div', { class: 'pl-cmp-header' }, [
+            el('div', { class: 'pl-cmp-title', text: 'Compare personas' }),
+            el('div', { class: 'pl-cmp-actions' }, [
+                el('button', {
+                    class: 'pl-icon-btn', type: 'button', title: 'Swap sides',
+                    onclick: () => { cmpIds = [cmpIds[1], cmpIds[0]]; renderCompare(); },
+                }, [el('i', { class: 'fa-solid fa-right-left' })]),
+                el('button', {
+                    class: 'pl-icon-btn', type: 'button', title: 'Close',
+                    onclick: () => closeCompare(),
+                }, [el('i', { class: 'fa-solid fa-xmark' })]),
+            ]),
+        ]);
+        cmp.replaceChildren(el('div', { class: 'pl-cmp-modal' }, [header, el('div', { class: 'pl-cmp-body' }, [grid])]));
+    }
+
+    const onGalleryKeydown = (e) => {
+        if (e.key !== 'Escape') return;
+        if (!cmp.hidden) { closeCompare(); e.stopPropagation(); }
+        else if (compareFrom) cancelCompare();
+    };
+    document.addEventListener('keydown', onGalleryKeydown);
 
     /**
      * Editable list of extra labeled blocks (Outfit, Scene Details, Lore,
@@ -1198,37 +1816,152 @@ export function createPersonaLibrary(container, adapter) {
         return success;
     }
 
-    /** "Gallery" tab: per-persona image set; click a tile to make it the portrait. */
-    function buildGalleryView(p) {
+    /**
+     * Per-image bindings editor: characters and chats this image should be
+     * used for, plus the optional "default image" flag. Edits a local copy
+     * and only writes on Save.
+     */
+    function openImageBindingEditor(p, im, g) {
+        const draft = {
+            characters: (im.bindings?.characters ?? []).map((r) => ({ ...r })),
+            chats: (im.bindings?.chats ?? []).map((r) => ({ ...r })),
+        };
+        const wasDefault = g.defaultKey === im.key;
+        const defaultChk = el('input', { type: 'checkbox', checked: wasDefault });
+        const refsList = el('div', { class: 'pl-binding-refs' });
+        const renderRefs = () => {
+            const chips = [
+                ...draft.characters.map((r) => ({ r, list: draft.characters, icon: 'fa-user' })),
+                ...draft.chats.map((r) => ({ r, list: draft.chats, icon: 'fa-message' })),
+            ];
+            refsList.replaceChildren(...(chips.length ? chips.map(({ r, list, icon }) => el('span', { class: 'pl-binding-ref' }, [
+                el('i', { class: `fa-solid ${icon}` }),
+                el('span', { class: 'pl-binding-ref-label', text: r.label || '(unnamed)' }),
+                el('button', {
+                    class: 'pl-binding-ref-remove', type: 'button', title: 'Unbind',
+                    onclick: () => { list.splice(list.indexOf(r), 1); renderRefs(); },
+                }, [el('i', { class: 'fa-solid fa-xmark' })]),
+            ])) : [el('div', { class: 'pl-sections-hint', text: 'Not bound to anything yet.' })]));
+        };
+        renderRefs();
+
+        const bindChar = el('button', {
+            class: 'pl-btn', type: 'button', text: '+ Bind current character',
+            title: 'Use this image whenever the character currently open is the one you are chatting with.',
+            onclick: async () => {
+                try {
+                    const info = adapter.getCurrentCharacterInfo?.();
+                    if (!info) { globalThis.toastr?.warning?.('No character is currently open.', 'Persona Library'); return; }
+                    const uuid = await adapter.ensureCharacterBindingId?.();
+                    const key = uuid ?? `avatar:${info.avatar}`;
+                    if (!draft.characters.some((r) => r.uuid === key)) {
+                        draft.characters.push({ uuid: key, label: 'Char: ' + (stripExt(info.avatar) ?? ((stripExt(info.name) ?? ' Card Name Error') + '*')) });
+                    }
+                } catch (e) {
+                    console.error('[PersonaLibrary]', e);
+                    globalThis.toastr?.error?.('Could not bind.', 'Persona Library');
+                }
+                renderRefs();
+            },
+        });
+        const bindChat = el('button', {
+            class: 'pl-btn', type: 'button', text: '+ Bind current chat',
+            title: 'Use this image only in the chat that is currently open.',
+            onclick: async () => {
+                try {
+                    const uuid = await adapter.ensureChatBindingId?.();
+                    if (!uuid) { globalThis.toastr?.warning?.('No chat is currently open.', 'Persona Library'); return; }
+                    if (!draft.chats.some((r) => r.uuid === uuid)) draft.chats.push({ uuid, label: adapter.getCurrentChatLabel?.() ?? 'Current chat' });
+                } catch (e) {
+                    console.error('[PersonaLibrary]', e);
+                    globalThis.toastr?.error?.('Could not bind.', 'Persona Library');
+                }
+                renderRefs();
+            },
+        });
+
+        const saveBtn = el('button', { class: 'pl-btn pl-primary', type: 'button', text: 'Save' });
+        const cancelBtn = el('button', { class: 'pl-btn', type: 'button', text: 'Cancel', onclick: () => closeDialog() });
+        saveBtn.onclick = async () => {
+            dialogBusy = true;
+            saveBtn.disabled = true; cancelBtn.disabled = true;
+            const okd = await galleryAction(async () => {
+                await adapter.setPersonaImageBindings(p.id, im.key, draft);
+                if (defaultChk.checked && !wasDefault) await adapter.setPersonaDefaultImage?.(p.id, im.key);
+                else if (!defaultChk.checked && wasDefault) await adapter.setPersonaDefaultImage?.(p.id, null);
+            }, { ok: 'Bindings saved.', fail: 'Could not save the bindings.', changesAvatar: true });
+            dialogBusy = false;
+            if (okd) { closeDialog(); if (!dirty) renderDetail(); }
+            else { saveBtn.disabled = false; cancelBtn.disabled = false; }
+        };
+
+        openDialog(el('div', { class: 'pl-dialog-modal' }, [
+            el('div', { class: 'pl-dialog-title', text: `Bindings \u2014 ${im.name}` }),
+            el('div', { class: 'pl-dialog-body' }, [
+                el('img', { class: 'pl-dialog-thumb', src: im.url, alt: im.name }),
+                el('div', { class: 'pl-sections-hint', text: 'While this persona is active and one of these matches, this image becomes the portrait. A chat binding wins over a character binding.' }),
+                refsList,
+                el('div', { class: 'pl-dialog-row' }, [bindChar, bindChat]),
+                el('label', { class: 'pl-dialog-check' }, [defaultChk, el('span', { text: 'Use as the default image (shown when no binding matches)' })]),
+            ]),
+            el('div', { class: 'pl-dialog-actions' }, [cancelBtn, saveBtn]),
+        ]));
+    }
+
+    /**
+     * "Gallery" tab: per-persona image set. Click a tile to make it the
+     * portrait; drop image files anywhere on the tab to add them; drag a
+     * tile's grip to reorder (the « » buttons step through this order).
+     * `onCount(n)` keeps the tab's own "Gallery (n)" label in step.
+     */
+    function buildGalleryView(p, onCount) {
         const wrap = el('div', { class: 'pl-gallery-view' });
         const fileInput = el('input', { type: 'file', accept: 'image/*', multiple: true, style: 'display:none' });
         const addBtn = el('button', { class: 'pl-btn pl-primary', type: 'button', text: '+ Add images' });
         addBtn.onclick = () => fileInput.click();
+        const canReorder = typeof adapter.reorderPersonaGalleryImages === 'function';
         const hint = el('div', {
             class: 'pl-sections-hint',
-            text: 'Click an image to make it this persona\u2019s portrait. The \u00AB \u00BB buttons under the portrait step through this set. Removing an image here never changes or deletes the persona itself.',
+            text: `Click an image to make it this persona’s portrait. Drop image files here to add them${canReorder ? ', and drag a tile’s grip to reorder' : ''}. The « » buttons under the portrait step through this set. Removing an image here never changes or deletes the persona itself.`,
+        });
+        const canBind = typeof adapter.setPersonaImageBindings === 'function';
+        const bindHint = canBind && el('div', {
+            class: 'pl-sections-hint',
+            text: 'Use the link button on an image to bind it to characters or chats. While this persona is active, the matching image becomes its portrait automatically (chat binding first, then character, then the default image). Bindings belong to this incarnation only.',
         });
         const grid = el('div', { class: 'pl-gal-grid' });
-        wrap.append(el('div', { class: 'pl-gal-toolbar' }, [addBtn]), hint, grid, fileInput);
+        wrap.append(el('div', { class: 'pl-gal-toolbar' }, [addBtn]), hint, bindHint, grid, fileInput);
+
+        let dragKey = null;
+        const clearMarks = () => grid.querySelectorAll('.pl-gal-drop-before, .pl-gal-drop-after, .pl-gal-dragging')
+            .forEach((n) => n.classList.remove('pl-gal-drop-before', 'pl-gal-drop-after', 'pl-gal-dragging'));
 
         function render() {
             const g = adapter.getPersonaGalleryImages(p.id);
             grid.replaceChildren();
+            onCount?.(g?.images?.length ?? 0);
             if (!g || !g.images.length) {
-                grid.append(el('div', { class: 'pl-details-empty', text: 'No gallery images yet \u2014 add some. Your current portrait is saved into the gallery automatically the first time.' }));
+                grid.append(el('div', { class: 'pl-details-empty', text: 'No gallery images yet — add some. Your current portrait is saved into the gallery automatically the first time.' }));
                 return;
             }
             for (const im of g.images) {
                 const isCurrent = im.key === g.currentKey;
-                const img = el('img', { class: 'pl-gal-img', src: im.url, alt: im.name, loading: 'lazy', title: isCurrent ? 'Current portrait' : 'Use as portrait' });
+                const isDefault = im.key === g.defaultKey;
+                const bindCount = (im.bindings?.characters?.length ?? 0) + (im.bindings?.chats?.length ?? 0);
+                const img = el('img', { class: 'pl-gal-img', src: im.url, alt: im.name, loading: 'lazy', draggable: 'false', title: isCurrent ? 'Current portrait' : 'Use as portrait' });
                 img.addEventListener('error', () => { tile.classList.add('pl-gal-missing'); img.title = 'File missing on the server'; }, { once: true });
                 img.addEventListener('click', () => {
                     if (isCurrent) return;
                     galleryAction(() => adapter.setPersonaGalleryCurrent(p.id, im.key), { fail: 'Could not switch the image.', changesAvatar: true })
                         .then((okd) => { if (okd && !dirty) renderDetail(); });
                 });
-                const zoom = el('button', { class: 'pl-gal-btn', type: 'button', title: 'Enlarge', onclick: (e) => { e.stopPropagation(); openLightbox(im.url, im.name); } },
+                // `im.url` is the stored ORIGINAL, so the viewer zooms real pixels.
+                const zoom = el('button', { class: 'pl-gal-btn', type: 'button', title: 'View full size (zoom)', onclick: (e) => { e.stopPropagation(); openLightbox(im.url, im.name); } },
                     [el('i', { class: 'fa-solid fa-magnifying-glass-plus' })]);
+                const bindBtn = canBind && el('button', {
+                    class: 'pl-gal-btn', type: 'button', title: 'Bind to characters / chats',
+                    onclick: (e) => { e.stopPropagation(); openImageBindingEditor(p, im, g); },
+                }, [el('i', { class: 'fa-solid fa-link' })]);
                 const del = el('button', {
                     class: 'pl-gal-btn pl-gal-del', type: 'button', title: 'Remove from gallery',
                     onclick: async (e) => {
@@ -1240,27 +1973,103 @@ export function createPersonaLibrary(container, adapter) {
                         render();
                     },
                 }, [el('i', { class: 'fa-solid fa-trash' })]);
+                const handle = canReorder && g.images.length > 1 && el('span', {
+                    class: 'pl-gal-btn pl-gal-handle', title: 'Drag to reorder', draggable: 'true',
+                    ondragstart: (e) => {
+                        dragKey = im.key;
+                        e.dataTransfer.effectAllowed = 'move';
+                        try { e.dataTransfer.setData('text/plain', im.key); } catch { /* ignore */ }
+                        try { e.dataTransfer.setDragImage(tile, 24, 24); } catch { /* ignore */ }
+                        tile.classList.add('pl-gal-dragging');
+                    },
+                    ondragend: () => { dragKey = null; clearMarks(); },
+                }, [el('i', { class: 'fa-solid fa-grip-vertical' })]);
                 const tile = el('div', { class: `pl-gal-tile${isCurrent ? ' pl-gal-current' : ''}` }, [
                     img,
                     isCurrent ? el('span', { class: 'pl-gal-badge', text: 'CURRENT' }) : null,
-                    el('div', { class: 'pl-gal-actions' }, [zoom, del]),
+                    (bindCount || isDefault) ? el('div', { class: 'pl-gal-flags' }, [
+                        isDefault ? el('span', { class: 'pl-gal-flag', title: 'Default image \u2014 shown when no binding matches' }, [el('i', { class: 'fa-solid fa-star' })]) : null,
+                        bindCount ? el('span', { class: 'pl-gal-flag', title: `${bindCount} binding${bindCount === 1 ? '' : 's'}` }, [el('i', { class: 'fa-solid fa-link' }), document.createTextNode(` ${bindCount}`)]) : null,
+                    ].filter(Boolean)) : null,
+                    el('div', { class: 'pl-gal-actions' }, [handle, bindBtn, zoom, del].filter(Boolean)),
                 ].filter(Boolean));
+
+                const dropSide = (e) => {
+                    const r = tile.getBoundingClientRect();
+                    return e.clientX > r.left + r.width / 2 ? 'after' : 'before';
+                };
+                tile.addEventListener('dragover', (e) => {
+                    if (!dragKey || dragKey === im.key) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    clearMarks();
+                    tile.classList.add(`pl-gal-drop-${dropSide(e)}`);
+                });
+                tile.addEventListener('drop', (e) => {
+                    if (!dragKey || dragKey === im.key) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const moving = dragKey;
+                    const side = dropSide(e);
+                    dragKey = null;
+                    clearMarks();
+                    const keys = g.images.map((x) => x.key).filter((k) => k !== moving);
+                    keys.splice(keys.indexOf(im.key) + (side === 'after' ? 1 : 0), 0, moving);
+                    galleryAction(() => adapter.reorderPersonaGalleryImages(p.id, keys), { fail: 'Could not reorder the images.' })
+                        .then(() => render());
+                });
                 grid.append(tile);
             }
         }
 
-        fileInput.onchange = async () => {
-            const files = Array.from(fileInput.files ?? []);
-            fileInput.value = '';
+        async function uploadFiles(files) {
             if (!files.length) return;
             addBtn.disabled = true;
-            const done = await galleryAction(async () => {
+            await galleryAction(async () => {
                 const r = await adapter.addPersonaGalleryImages(p.id, files);
                 if (r?.failed) globalThis.toastr?.warning?.(`${r.failed} image(s) failed to upload.`, 'Persona Library');
             }, { ok: 'Added to gallery.', fail: 'Could not add images.' });
             addBtn.disabled = false;
-            if (done !== undefined) render();
+            render();
+        }
+
+        fileInput.onchange = () => {
+            const files = Array.from(fileInput.files ?? []);
+            fileInput.value = '';
+            uploadFiles(files);
         };
+
+        // Drag-and-drop uploads. Only reacts to real files from outside the
+        // page, so the tile-reordering drag above (which carries no files)
+        // can never be mistaken for an upload.
+        const hasFiles = (e) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+        let dragDepth = 0;
+        wrap.addEventListener('dragenter', (e) => {
+            if (!hasFiles(e)) return;
+            e.preventDefault();
+            dragDepth++;
+            wrap.classList.add('pl-gal-dropping');
+        });
+        wrap.addEventListener('dragover', (e) => {
+            if (!hasFiles(e)) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+        });
+        wrap.addEventListener('dragleave', (e) => {
+            if (!hasFiles(e)) return;
+            dragDepth = Math.max(0, dragDepth - 1);
+            if (!dragDepth) wrap.classList.remove('pl-gal-dropping');
+        });
+        wrap.addEventListener('drop', (e) => {
+            if (!hasFiles(e)) return;
+            e.preventDefault();
+            dragDepth = 0;
+            wrap.classList.remove('pl-gal-dropping');
+            const all = Array.from(e.dataTransfer.files ?? []);
+            const images = all.filter((f) => (f.type || '').startsWith('image/'));
+            if (images.length < all.length) globalThis.toastr?.warning?.('Only image files can be added.', 'Persona Library');
+            uploadFiles(images);
+        });
 
         render();
         return wrap;
@@ -1496,6 +2305,20 @@ export function createPersonaLibrary(container, adapter) {
         return wrap;
     }
 
+    /**
+     * The best full-size file for a persona's portrait. SillyTavern stores
+     * the portrait itself at a fixed, modest size, but when the current
+     * portrait came from this persona's Gallery, the untouched original is
+     * still there — prefer it so zooming in shows real detail instead of
+     * magnifying the stored copy. Falls back to the avatar file (the viewer
+     * also retries it if the gallery file is missing).
+     */
+    function originalPortraitUrl(p) {
+        const g = adapter.getPersonaGalleryImages?.(p.id);
+        const current = g?.images?.find((im) => im.key === g.currentKey);
+        return current?.url ?? adapter.avatarUrl?.(p.id) ?? p.image;
+    }
+
     function renderDetail() {
         const p = (adapter.getPersonas() ?? []).find((x) => x.id === selectedId);
         if (!p) { detail.hidden = true; detail.replaceChildren(); return; }
@@ -1505,6 +2328,7 @@ export function createPersonaLibrary(container, adapter) {
         const activeId = adapter.getActiveId?.() ?? null;
         const list = visiblePersonas();
         const canNav = list.length > 1;
+        detailTab = validTab(detailTab);
 
         const nameInput = el('input', { class: 'pl-name-input', type: 'text', value: p.name, oninput: () => { dirty = true; } });
 
@@ -1557,20 +2381,7 @@ export function createPersonaLibrary(container, adapter) {
             },
         });
 
-        async function run(fn, ok, fail, { forceRerender = false } = {}) {
-            try {
-                await fn();
-                note = ok;
-                dirty = false;
-                globalThis.toastr?.success?.(ok, 'Persona Library');
-            } catch (e) {
-                console.error('[PersonaLibrary]', e);
-                note = fail;
-                globalThis.toastr?.error?.(fail, 'Persona Library');
-            }
-            if (forceRerender) lastFingerprint = null;
-            refresh();
-        }
+        const run = runAction;
 
         // -- header: name + icon actions + close, mirroring a CharLib-style entry header --
         const iconBtn = (icon, title, onclick, extraClass = '') => el('button', {
@@ -1662,54 +2473,86 @@ export function createPersonaLibrary(container, adapter) {
             return el('i', { class: 'fa-solid fa-user-lock' });
         }
 
-        const lockBtn = (type, label) => {
-            const locked = adapter.isPersonaLocked?.(p.id, type) ?? false;
-            const title = !lockable
-                ? `${label} (select this persona first to change its lock)`
-                : locked ? `${label}: locked \u2014 click to unlock` : `${label}: not locked \u2014 click to lock`;
-            return el('button', {
-                class: `pl-icon-btn pl-lock-btn${locked ? ' pl-lock-active' : ''}${!lockable ? ' pl-lock-disabled' : ''}`,
-                type: 'button',
-                title,
-                onclick: lockable ? () => run(
-                    () => adapter.setPersonaLockState(p.id, type, !locked),
-                    locked ? `${label} unlocked.` : `${label} locked.`,
-                    `Could not change ${label.toLowerCase()} lock.`,
-                    // Locks aren't part of getPersonas()/getActiveId(), the
-                    // two things refresh()'s fingerprint hashes to decide
-                    // whether a re-render is even needed — so a lock toggle
-                    // alone produces an identical fingerprint and refresh()
-                    // bails out before renderDetail() ever runs. The native
-                    // lock still succeeds (hence the correct toast, and the
-                    // correct button state if you close and reopen — that
-                    // path calls renderDetail() directly, not through this
-                    // memo), it just doesn't get reflected live. Forcing the
-                    // memo to invalidate here makes it match immediately.
-                    { forceRerender: true },
-                ) : undefined,
-            }, [lockIcon(type)]);
-        };
+        // -- the three locks live in ONE dropdown: a padlock with a small arrow.
+        // Clicking it opens a menu with the Default / Character / Chat locks
+        // (each with its own icon and an on/off tick). Saves two header
+        // buttons' worth of room without dropping any function.
+        const LOCKS = [['default', 'Default Persona Lock'], ['character', 'Character Lock'], ['chat', 'Chat Lock']];
+        const lockState = (type) => adapter.isPersonaLocked?.(p.id, type) ?? false;
 
+        function openLockMenu(anchor) {
+            const r = anchor.getBoundingClientRect();
+            const items = [{ title: lockable ? 'Persona locks' : 'Persona locks — select this persona first' }];
+            for (const [type, label] of LOCKS) {
+                const locked = lockState(type);
+                items.push({
+                    iconNode: () => lockIcon(type),
+                    label,
+                    checked: locked,
+                    disabled: !lockable,
+                    onClick: async () => {
+                        await run(
+                            () => adapter.setPersonaLockState(p.id, type, !locked),
+                            locked ? `${label} unlocked.` : `${label} locked.`,
+                            `Could not change ${label.toLowerCase()} lock.`,
+                            // Locks aren't part of getPersonas()/getActiveId(), the
+                            // two things refresh()'s fingerprint hashes to decide
+                            // whether a re-render is even needed, so a lock toggle
+                            // alone would bail out before renderDetail() ever runs.
+                            // Forcing the memo to invalidate makes it show live.
+                            { forceRerender: true },
+                        );
+                        // The header was just rebuilt; keep the menu open on the
+                        // new button so several locks can be set in one go.
+                        if (lockMenuHandle?.btn.isConnected) lockMenuHandle.open();
+                    },
+                });
+            }
+            ctxMenu.open({ x: r.left, y: r.bottom + 4, anchorRect: r, items });
+        }
+
+        function buildLockMenuBtn() {
+            const states = LOCKS.map(([type, label]) => `${label.replace(/ Lock$/, '')}: ${lockState(type) ? 'on' : 'off'}`).join(' · ');
+            const anyLocked = LOCKS.some(([type]) => lockState(type));
+            const btn = el('button', {
+                class: `pl-icon-btn pl-lock-btn pl-lock-menu-btn${anyLocked ? ' pl-lock-active' : ''}${!lockable ? ' pl-lock-dim' : ''}`,
+                type: 'button',
+                title: `Persona locks — ${states}${lockable ? '' : ' (select this persona first to change them)'}`,
+                'aria-haspopup': 'menu',
+            }, []);
+            // Hand-drawn SVG (padlock + small arrow), not Font Awesome glyphs:
+            // bare .fa-lock is hidden by SillyTavern's own persona-lock CSS
+            // (see lockIcon() above), and the SVG sidesteps that entirely.
+            // The padlock body has its keyhole cut out via an even-odd fill.
+            btn.innerHTML = `
+                <svg class="pl-lockmenu-padlock" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M7.5 10.5V7.5a4.5 4.5 0 0 1 9 0v3" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"></path>
+                    <path fill="currentColor" fill-rule="evenodd" d="M6.5 10h11a2.5 2.5 0 0 1 2.5 2.5v7a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 19.5v-7A2.5 2.5 0 0 1 6.5 10zM12 13.6a1.8 1.8 0 1 0 0 3.6 1.8 1.8 0 0 0 0-3.6z"></path>
+                </svg>
+                <svg class="pl-lockmenu-arrow" viewBox="0 0 10 10" aria-hidden="true">
+                    <path d="M2 3.6 5 6.6 8 3.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path>
+                </svg>`;
+            btn.addEventListener('click', (e) => { e.stopPropagation(); openLockMenu(btn); });
+            lockMenuHandle = { btn, open: () => openLockMenu(btn) };
+            return btn;
+        }
+        const lockMenuBtn = adapter.setPersonaLockState ? buildLockMenuBtn() : null;
+
+        // Incarnations: a slim caret attached to the right edge of the
+        // "use" check (a split button), so no extra square in the header.
+        const incMenuBtn = adapter.createPersonaIncarnation && buildIncarnationMenuBtn(p);
+        const useBtn = iconBtn(
+            'fa-check', p.id === activeId ? 'In use' : 'Use this persona', () => use(p.id),
+            `${p.id === activeId ? 'pl-icon-active' : 'pl-icon-primary'}${incMenuBtn ? ' pl-split-main' : ''}`,
+        );
         const headerActions = el('div', { class: 'pl-header-actions' }, [
-            backToGridBtn,
-            iconBtn('fa-check', p.id === activeId ? 'In use' : 'Use this persona', () => use(p.id), p.id === activeId ? 'pl-icon-active' : 'pl-icon-primary'),
-            adapter.setPersonaLockState && lockBtn('default', 'Default Persona Lock'),
-            adapter.setPersonaLockState && lockBtn('character', 'Character Lock'),
-            adapter.setPersonaLockState && lockBtn('chat', 'Chat Lock'),
+            // The chat-bar overlay has no grid to go back to; its X closes it.
+            !overlayMode && backToGridBtn,
+            incMenuBtn ? el('div', { class: 'pl-split' }, [useBtn, incMenuBtn]) : useBtn,
+            lockMenuBtn,
             iconBtn('fa-book-bookmark', 'Persona Lore (native)', () => openPersonaLore(p.id, p.name)),
-            adapter.duplicatePersona && iconBtn('fa-clone', 'Duplicate', () => run(() => adapter.duplicatePersona(p.id), 'Duplicated.', 'Could not duplicate.')),
-            adapter.deletePersona && iconBtn('fa-trash', 'Delete', async () => {
-                const ask = adapter.confirm ?? (async (m) => window.confirm(m));
-                const galCount = adapter.getPersonaGalleryImages?.(p.id)?.images?.length ?? 0;
-                const galNote = galCount ? ` Its ${galCount} gallery image${galCount === 1 ? '' : 's'} will be deleted too.` : '';
-                if (!await ask(`Delete persona "${p.name}"?${galNote} This cannot be undone.`)) return;
-                selectedId = null;
-                await run(async () => {
-                    await adapter.deletePersona(p.id);
-                    // Only after the persona itself is gone; failure here is harmless.
-                    try { await adapter.deletePersonaGallery?.(p.id); } catch (e) { console.warn('[PersonaLibrary] gallery cleanup failed', e); }
-                }, 'Deleted.', 'Could not delete.');
-            }, 'pl-icon-danger'),
+            adapter.duplicatePersona && iconBtn('fa-clone', 'Duplicate', () => duplicateFlow(p)),
+            adapter.deletePersona && iconBtn('fa-trash', 'Delete', () => deleteFlow(p), 'pl-icon-danger'),
             canEdit && detailTab === 'edit' && el('button', {
                 class: 'pl-btn pl-primary', type: 'button', text: 'Save',
                 onclick: () => run(async () => {
@@ -1737,7 +2580,11 @@ export function createPersonaLibrary(container, adapter) {
                 // Routed through closeDetail() so an unsaved-changes prompt
                 // still gets a chance to fire first; the native-tab-close
                 // only happens once that's resolved (or wasn't needed).
-                onclick: () => closeDetail(() => document.querySelector('.drawer-icon[title="Persona Management"]')?.click()),
+                // In the chat-bar overlay there is no drawer to close — the
+                // X just closes the window and leaves you in the chat.
+                onclick: () => (overlayMode
+                    ? closeDetail()
+                    : closeDetail(() => document.querySelector('.drawer-icon[title="Persona Management"]')?.click())),
             }, [el('i', { class: 'fa-solid fa-xmark' })]),
         ].filter(Boolean));
 
@@ -1749,25 +2596,29 @@ export function createPersonaLibrary(container, adapter) {
             headerActions,
         ]);
 
+        const galleryTabLabel = (n) => (n ? `Gallery (${n})` : 'Gallery');
+        const galleryTabBtn = adapter.getPersonaGalleryImages && el('button', {
+            class: `pl-detail-tab${detailTab === 'gallery' ? ' active' : ''}`, type: 'button',
+            text: galleryTabLabel(adapter.getPersonaGalleryImages(p.id)?.images?.length ?? 0),
+            title: 'This persona\u2019s set of swappable portraits',
+            onclick: () => { setDetailTab('gallery'); renderDetail(); },
+        });
+
         const tabBar = el('div', { class: 'pl-detail-tabs' }, [
             el('button', {
                 class: `pl-detail-tab${detailTab === 'details' ? ' active' : ''}`, type: 'button', text: 'Details',
-                onclick: () => { detailTab = 'details'; renderDetail(); },
+                onclick: () => { setDetailTab('details'); renderDetail(); },
             }),
             canEdit && el('button', {
                 class: `pl-detail-tab${detailTab === 'edit' ? ' active' : ''}`, type: 'button', text: 'Edit',
-                onclick: () => { detailTab = 'edit'; renderDetail(); },
+                onclick: () => { setDetailTab('edit'); renderDetail(); },
             }),
             el('button', {
                 class: `pl-detail-tab${detailTab === 'preview' ? ' active' : ''}`, type: 'button', text: 'Preview',
                 title: 'Exactly what gets folded into the prompt the AI receives',
-                onclick: () => { detailTab = 'preview'; renderDetail(); },
+                onclick: () => { setDetailTab('preview'); renderDetail(); },
             }),
-            adapter.getPersonaGalleryImages && el('button', {
-                class: `pl-detail-tab${detailTab === 'gallery' ? ' active' : ''}`, type: 'button', text: 'Gallery',
-                title: 'This persona\u2019s set of swappable portraits',
-                onclick: () => { detailTab = 'gallery'; renderDetail(); },
-            }),
+            galleryTabBtn,
         ].filter(Boolean));
 
         const connections = (p.connections ?? []).filter(Boolean);
@@ -1795,11 +2646,11 @@ export function createPersonaLibrary(container, adapter) {
             : detailTab === 'preview'
                 ? buildPreviewView(p, sectionsDraft, variantsDraft, adapter)
                 : (detailTab === 'gallery' && adapter.getPersonaGalleryImages)
-                    ? buildGalleryView(p)
+                    ? buildGalleryView(p, (n) => { galleryTabBtn.textContent = galleryTabLabel(n); })
                     : buildDetailsView(p, connections);
 
         const heroImg = personaImg({ class: 'pl-detail-hero', alt: p.name, src: p.image, title: 'Click to enlarge' }, p.id, adapter);
-        heroImg.addEventListener('click', () => openLightbox(heroImg.src, p.name));
+        heroImg.addEventListener('click', () => openLightbox(originalPortraitUrl(p), p.name, p.image));
         const heroImgArea = el('div', { class: 'pl-hero-img-area' }, [heroImg]);
 
         const navPrev = canNav && el('button', {
@@ -1903,6 +2754,9 @@ export function createPersonaLibrary(container, adapter) {
     }
 
     let lastFingerprint = null;
+    // Set by renderDetail(): the live lock-dropdown button + a function that
+    // reopens its menu (used to keep the menu open after toggling a lock).
+    var lockMenuHandle = null;
     function refresh() {
          function fingerprint() {
             return JSON.stringify({
@@ -1921,15 +2775,45 @@ export function createPersonaLibrary(container, adapter) {
     }
 
     const unsubscribe = adapter.subscribe?.(refresh);
+    // The other instance (gallery <-> chat-bar overlay) changed something:
+    // force a redraw so favorites, names, locks, incarnations never go stale.
+    // The detail view is left alone while it holds unsaved edits.
+    const unsubscribeChanges = onLibraryChanged((src) => {
+        if (src === changeSource) return;
+        lastFingerprint = null;
+        if (dirty) { renderGrid(); return; }
+        refresh();
+    });
     refresh();
+
+    const byId = (id) => (adapter.getPersonas() ?? []).find((x) => x.id === id);
 
     return {
         refresh,
+        // Driven by the chat-bar Quick Switcher's right-click menu (see
+        // library-bridge.js), so both menus run the exact same flows.
+        openPersona: (id, tab) => { if (byId(id)) openPersona(id, tab); },
+        startCompare: (id) => { if (byId(id)) { if (overlayMode) startCompare(id); else { closeDetail(); startCompare(id); } } },
+        toggleFavorite: (id) => toggleFavorite(id),
+        isFavorite: (id) => favoriteSet().has(id),
+        duplicate: (id) => { const p = byId(id); return p ? duplicateFlow(p) : undefined; },
+        remove: (id) => { const p = byId(id); return p ? deleteFlow(p) : undefined; },
+        switchIncarnation: (id, key) => switchIncarnationFlow(id, key),
+        manageIncarnations: (id) => { if (byId(id)) manageIncarnations(id); },
         destroy() {
             try { unsubscribe?.(); } catch { /* ignore */ }
-            document.removeEventListener('keydown', onLightboxKeydown);
-            lightbox.remove();
+            try { unsubscribeChanges?.(); } catch { /* ignore */ }
+            document.removeEventListener('keydown', onGalleryKeydown);
+            document.removeEventListener('keydown', onDialogKey, true);
+            closeMenu();
+            dialog.remove();
+            clearTimeout(scrollTimer);
+            try { gridObserver?.disconnect(); } catch { /* ignore */ }
+            viewer.destroy();
+            ctxMenu.destroy();
+            cmp.remove();
             detail.remove();
+            textFocus.remove();
             root.remove();
         },
     };

@@ -5,7 +5,8 @@
  */
 
 import { createPersonaLibrary } from './modules/gallery.js';
-import { stAdapter, ctx, registerVariantGenerationHook } from './modules/st-adapter.js';
+import { stAdapter, ctx, registerVariantGenerationHook, registerPersonaUsageTracking, registerImageBindingHook } from './modules/st-adapter.js';
+import { setLibrary, setOverlayFactory, destroyOverlayLibrary } from './modules/library-bridge.js';
 import { mountSettingsPanel } from './modules/settings-panel.js';
 import { mountQuickSwitcher, unmountQuickSwitcher } from './modules/quick-switcher.js';
 
@@ -15,6 +16,8 @@ let instance = null;
 let observer = null;
 let mountQueued = false;
 let unregisterVariantHook = null;
+let unregisterUsageTracking = null;
+let unregisterImageBindings = null;
 
 function personaBlock() {
     // #PersonaManagement is SillyTavern's actual drawer-content wrapper for
@@ -78,6 +81,9 @@ function mount() {
 
     try {
         instance = createPersonaLibrary(host, stAdapter);
+        // Kept for anything that wants the drawer's gallery instance. (The
+        // Quick Switcher no longer drives it: it has its own overlay windows.)
+        setLibrary(instance);
         document.body.classList.add('pl-active');
         return true;
     } catch (e) {
@@ -85,6 +91,7 @@ function mount() {
         host.remove();
         document.body.classList.remove('pl-active');
         instance = null;
+        setLibrary(null);
         return false;
     }
 }
@@ -92,6 +99,7 @@ function mount() {
 function unmount() {
     try { instance?.destroy(); } catch { /* ignore */ }
     instance = null;
+    setLibrary(null);
     document.getElementById(HOST_ID)?.remove();
     document.getElementById(NATIVE_TOGGLE_ID)?.remove();
     document.body.classList.remove('pl-active');
@@ -125,6 +133,11 @@ function watch() {
 }
 
 async function boot() {
+    // Lets the chat-bar Quick Switcher build its own copy of the editor /
+    // compare / incarnation windows over the chat (see library-bridge.js).
+    // Registered first and unconditionally: it needs neither the Persona's
+    // tab nor the gallery to exist.
+    setOverlayFactory((host) => createPersonaLibrary(host, stAdapter, { overlay: true }));
     for (let i = 0; i < 60 && !mount(); i++) {
         await new Promise((r) => setTimeout(r, 500));
     }
@@ -138,6 +151,12 @@ async function boot() {
     mountQuickSwitcher(stAdapter);
     if (!unregisterVariantHook) {
         try { unregisterVariantHook = registerVariantGenerationHook(); } catch (e) { console.error('[PersonaLibrary] could not register variant generation hook', e); }
+    }
+    if (!unregisterUsageTracking) {
+        try { unregisterUsageTracking = registerPersonaUsageTracking(); } catch (e) { console.error('[PersonaLibrary] could not register persona usage tracking', e); }
+    }
+    if (!unregisterImageBindings) {
+        try { unregisterImageBindings = registerImageBindingHook(); } catch (e) { console.error('[PersonaLibrary] could not register image binding hook', e); }
     }
     window.addEventListener('resize', () => instance?.refresh(), { passive: true });
 }
@@ -165,5 +184,17 @@ setTimeout(() => {
 }, 0);
 
 export async function onEnable() { safeBoot(); }
-export async function onDisable() { unmount(); unmountQuickSwitcher(); try { unregisterVariantHook?.(); } catch { /* ignore */ } unregisterVariantHook = null; }
-export async function onDelete() { unmount(); unmountQuickSwitcher(); try { unregisterVariantHook?.(); } catch { /* ignore */ } unregisterVariantHook = null; }
+function teardown() {
+    unmount();
+    unmountQuickSwitcher();
+    destroyOverlayLibrary();
+    try { unregisterVariantHook?.(); } catch { /* ignore */ }
+    unregisterVariantHook = null;
+    try { unregisterUsageTracking?.(); } catch { /* ignore */ }
+    unregisterUsageTracking = null;
+    try { unregisterImageBindings?.(); } catch { /* ignore */ }
+    unregisterImageBindings = null;
+}
+
+export async function onDisable() { teardown(); }
+export async function onDelete() { teardown(); }

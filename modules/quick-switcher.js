@@ -34,6 +34,9 @@
  *     the Persona's tab, so it doesn't show up uninvited.
  */
 
+import { createContextMenu, personaMenuItems } from './persona-menu.js';
+import { getOverlayLibrary, onLibraryChanged, emitLibraryChanged } from './library-bridge.js';
+
 const BUTTON_ID = 'persona-library-quickswitch-button';
 const PANEL_ID = 'persona-library-quickswitch-panel';
 
@@ -73,8 +76,21 @@ let tokenRunId = 0;
 // face in sync with the active persona independent of DOM-mutation timing
 // (see mountQuickSwitcher/unmountQuickSwitcher below).
 let unsubscribeActive = null;
+// Same idea for changes made in the overlay windows / the gallery (library-bridge.js).
+let unsubscribeLibrary = null;
+// Right-click menu for rows — the SAME menu the gallery's tiles use
+// (persona-menu.js), created on first use and torn down with the panel.
+let rowMenu = null;
+let rowMenuOpen = false;
+// Set by openPanel(): re-renders the row list in place, so actions that
+// keep the popup open (favorite, incarnation switch) can refresh it.
+let rerenderList = null;
 
 function closePanel() {
+    rowMenu?.destroy();
+    rowMenu = null;
+    rowMenuOpen = false;
+    rerenderList = null;
     panel?.remove();
     panel = null;
     if (outsideClickHandler) document.removeEventListener('pointerdown', outsideClickHandler, true);
@@ -84,11 +100,11 @@ function closePanel() {
     button?.setAttribute('aria-expanded', 'false');
 }
 
-function buildRow(p, adapter, activeId, onPick) {
+function buildRow(p, adapter, activeId, onPick, onContext) {
     const row = document.createElement('button');
     row.type = 'button';
     row.className = `pl-qs-row${p.id === activeId ? ' pl-qs-active' : ''}`;
-    row.title = p.name;
+    row.title = p.incarnationCount > 1 ? `${p.name} \u00b7 ${p.incarnationCount} incarnations` : p.name;
 
     const img = document.createElement('img');
     img.className = 'pl-qs-thumb';
@@ -105,13 +121,113 @@ function buildRow(p, adapter, activeId, onPick) {
     name.textContent = p.name;
 
     row.append(img, name);
+    if (p.incarnationCount > 1) {
+        const badge = document.createElement('span');
+        badge.className = 'pl-qs-inc';
+        badge.title = `${p.incarnationCount} incarnations`;
+        const icon = document.createElement('i');
+        icon.className = 'fa-solid fa-layer-group';
+        const n = document.createElement('span');
+        n.textContent = String(p.incarnationCount);
+        badge.append(icon, n);
+        row.append(badge);
+    }
     if (p.id === activeId) {
         const check = document.createElement('i');
         check.className = 'fa-solid fa-check pl-qs-check';
         row.append(check);
     }
-    row.addEventListener('click', () => onPick(p.id));
+
+    // Long-press stands in for right-click on touch screens (iOS never sends
+    // contextmenu for a long-press). The click that follows the press is
+    // swallowed so it doesn't also switch persona.
+    let pressTimer = null;
+    let longPressed = false;
+    row.addEventListener('pointerdown', (e) => {
+        if (e.pointerType !== 'touch') return;
+        longPressed = false;
+        clearTimeout(pressTimer);
+        pressTimer = setTimeout(() => {
+            longPressed = true;
+            onContext({ clientX: e.clientX, clientY: e.clientY, currentTarget: row, preventDefault() {} }, p);
+        }, 500);
+    });
+    for (const t of ['pointerup', 'pointerleave', 'pointercancel']) row.addEventListener(t, () => clearTimeout(pressTimer));
+    row.addEventListener('contextmenu', (e) => onContext(e, p));
+    row.addEventListener('click', (e) => {
+        if (longPressed) { longPressed = false; e.preventDefault(); return; }
+        onPick(p.id);
+    });
     return row;
+}
+
+/**
+ * What each right-click action does from the chat bar. Every action works
+ * right here over the chat: the windows (editor, image gallery, compare,
+ * incarnations) come from a headless overlay instance of the gallery mounted
+ * on <body> (library-bridge.js), so nothing needs the Persona Management
+ * drawer to be open — or even to have been opened this session. The gallery's
+ * own right-click menu is separate and is not touched by any of this.
+ * If the overlay can't be built for some reason, the actions that don't need
+ * a window fall back to talking to the adapter directly.
+ */
+function buildRowActions(adapter) {
+    const toast = (kind, msg) => globalThis.toastr?.[kind]?.(msg, 'Persona Library');
+    const attempt = async (fn, ok, fail) => {
+        try { await fn(); if (ok) toast('success', ok); } catch (e) {
+            console.error('[PersonaLibrary] Quick Switcher action failed', e);
+            toast('error', `${fail} ${e?.message ?? ''}`.trim());
+        }
+    };
+    // Runs fn(lib, p, ...args) against the overlay instance (or explains why not).
+    const viaOverlay = (fn) => (p, ...args) => {
+        const lib = getOverlayLibrary();
+        if (!lib) {
+            toast('error', 'Could not open the persona window.');
+            return undefined;
+        }
+        return fn(lib, p, ...args);
+    };
+    return {
+        use: async (p) => {
+            await attempt(async () => { await adapter.setActive(p.id); updateButtonImage(adapter); emitLibraryChanged('quick-switcher'); }, 'Persona activated.', 'Could not switch persona.');
+        },
+        edit: typeof adapter.updatePersona === 'function' ? viaOverlay((lib, p) => lib.openPersona(p.id, 'edit')) : null,
+        gallery: adapter.getPersonaGalleryImages ? viaOverlay((lib, p) => lib.openPersona(p.id, 'gallery')) : null,
+        compare: viaOverlay((lib, p) => lib.startCompare(p.id)),
+        duplicate: adapter.duplicatePersona ? (p) => {
+            const lib = getOverlayLibrary();
+            return lib ? lib.duplicate(p.id) : attempt(() => adapter.duplicatePersona(p.id), 'Duplicated.', 'Could not duplicate.');
+        } : null,
+        remove: adapter.deletePersona ? (p) => {
+            const lib = getOverlayLibrary();
+            if (lib) return lib.remove(p.id);
+            return attempt(async () => {
+                if (!await adapter.confirm(`Delete persona \u201c${p.name}\u201d? This cannot be undone.`)) return;
+                await adapter.deletePersona(p.id);
+                try { await adapter.deletePersonaGallery?.(p.id); } catch { /* harmless */ }
+            }, null, 'Could not delete.');
+        } : null,
+        toggleFavorite: async (p) => {
+            const lib = getOverlayLibrary();
+            if (lib) lib.toggleFavorite(p.id);
+            else {
+                const favs = new Set(adapter.getSettings?.().favorites ?? []);
+                if (favs.has(p.id)) favs.delete(p.id); else favs.add(p.id);
+                adapter.saveSettings?.({ favorites: [...favs] });
+                emitLibraryChanged('quick-switcher');
+            }
+            rerenderList?.();
+        },
+        switchIncarnation: adapter.switchPersonaIncarnation ? async (p, key) => {
+            const lib = getOverlayLibrary();
+            if (lib) await lib.switchIncarnation(p.id, key);
+            else await attempt(() => adapter.switchPersonaIncarnation(p.id, key), 'Switched incarnation.', 'Could not switch incarnation.');
+            updateButtonImage(adapter);
+            rerenderList?.();
+        } : null,
+        manageIncarnations: adapter.createPersonaIncarnation ? viaOverlay((lib, p) => lib.manageIncarnations(p.id)) : null,
+    };
 }
 
 function sortPersonas(list, sortKey) {
@@ -177,6 +293,31 @@ function openPanel(adapter) {
     const list = document.createElement('div');
     list.className = 'pl-qs-list';
 
+    const rowActions = buildRowActions(adapter);
+    function openRowMenu(e, p) {
+        e.preventDefault?.();
+        const isFav = new Set(adapter.getSettings?.().favorites ?? []).has(p.id);
+        rowMenu = rowMenu ?? createContextMenu(document.body);
+        rowMenuOpen = true;
+        rowMenu.open({
+            x: e.clientX,
+            y: e.clientY,
+            anchorRect: e.currentTarget?.getBoundingClientRect?.(),
+            items: personaMenuItems(p, {
+                isActive: p.id === (adapter.getActiveId?.() ?? null),
+                isFav,
+                canCompare: (adapter.getPersonas?.() ?? []).length > 1,
+                incarnations: adapter.getPersonaIncarnations?.(p.id) ?? null,
+                actions: rowActions,
+            }),
+            extraDismissTargets: [list],
+            onClose: () => { rowMenuOpen = false; },
+            // Everything closes the popup except actions that just tweak
+            // the list in place (favorite, switching incarnation).
+            afterAction: (item) => { if (!item.keepOpen) closePanel(); },
+        });
+    }
+
     function renderList() {
         const all = adapter.getPersonas?.() ?? [];
         const activeId = adapter.getActiveId?.() ?? null;
@@ -201,7 +342,7 @@ function openPanel(adapter) {
                     globalThis.toastr?.error?.('Could not switch persona.', 'Persona Library');
                 }
                 closePanel();
-            }));
+            }, openRowMenu));
         }
         if (sortKey === 'tokens-asc' || sortKey === 'tokens-desc' || sortKey === 'tokens') {
             ensureTokenCounts(all, adapter, renderList);
@@ -214,6 +355,7 @@ function openPanel(adapter) {
     });
 
     tokenCache = new Map();
+    rerenderList = renderList;
     renderList();
 
     panel.append(header, list);
@@ -222,9 +364,12 @@ function openPanel(adapter) {
     button?.setAttribute('aria-expanded', 'true');
 
     outsideClickHandler = (e) => {
+        // The right-click menu is its own element on <body>, so it must count as "inside".
+        if (rowMenu?.contains(e.target)) return;
         if (panel && !panel.contains(e.target) && e.target !== button && !button?.contains(e.target)) closePanel();
     };
-    escHandler = (e) => { if (e.key === 'Escape') closePanel(); };
+    // While the row menu is open, Escape closes only that (its own handler).
+    escHandler = (e) => { if (e.key === 'Escape' && !rowMenuOpen) closePanel(); };
     // Deferred so the click that opened the panel doesn't immediately
     // re-trigger this same listener and close it right back.
     setTimeout(() => {
@@ -417,6 +562,7 @@ export function mountQuickSwitcher(adapter) {
         return;
     }
     if (!unsubscribeActive) unsubscribeActive = adapter.subscribe?.(() => updateButtonImage(adapter)) ?? null;
+    if (!unsubscribeLibrary) unsubscribeLibrary = onLibraryChanged((src) => { if (src !== 'quick-switcher') updateButtonImage(adapter); });
     for (const sel of MOUNT_CANDIDATES) {
         const container = document.querySelector(sel);
         if (container) { ensureButton(container, adapter); return; }
@@ -430,4 +576,6 @@ export function unmountQuickSwitcher() {
     button = null;
     unsubscribeActive?.();
     unsubscribeActive = null;
+    unsubscribeLibrary?.();
+    unsubscribeLibrary = null;
 }
