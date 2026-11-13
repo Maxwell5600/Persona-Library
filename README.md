@@ -332,7 +332,7 @@ The Variants concept (dynamic, conditionally-active description blocks) draws on
 "Additional Descriptions," implemented independently here. Built independently
 overall, for personas rather than characters.
 
-A thank you to https://github.com/Shin-F/Persona-Multi-Avatars for Ding the multi-avatar and Image Bindings first. Persona Library now has its own built in version (Added with incarnations) but i do encourage you to try it out and see if ya like that one its got a bit of a different feel and vibe to it than the one native to Persona Library.
+A thank you to https://github.com/Shin-F/Persona-Multi-Avatars for Doing the multi-avatar and Image Bindings first. Persona Library now has its own built in version (Added with incarnations) but i do encourage you to try it out and see if ya like that one its got a bit of a different feel and vibe to it than the one native to Persona Library.
 
 ## A note on how this was built
 
