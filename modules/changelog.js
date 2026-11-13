@@ -23,6 +23,7 @@ export const CHANGELOG = [
             "The incarnation arrow is now a slim caret attached to the right of the \u201cUse this persona\u201d check (before the lock dropdown) instead of a square button of its own.",
         ],
         fixed: [
+            "Spell check now works in the expanded text editor and in the core description and section text boxes (it had been switched off).",
             "Right-clicking a persona in the chat-bar Quick Switcher no longer jumps into the Persona Management gallery. Edit, Open image gallery, Compare with\u2026 and Manage incarnations now open right over the chat (and work even if the Persona tab was never opened). Compare uses a searchable picker list. The gallery\u2019s own right-click menu is unchanged. Changes made in either place show up in the other immediately.",
         ],
     },

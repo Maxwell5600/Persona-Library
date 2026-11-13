@@ -464,7 +464,7 @@ export function createPersonaLibrary(container, adapter, options = {}) {
     let textFocusTarget = null; // { setValue, compactEl } while open
     const textFocusTitle = el('div', { class: 'pl-text-focus-title' });
     const textFocusArea = el('textarea', {
-        class: 'pl-text-focus-area', spellcheck: 'false',
+        class: 'pl-text-focus-area', spellcheck: 'true',
         oninput: () => {
             if (!textFocusTarget) return;
             dirty = true;
@@ -1311,7 +1311,7 @@ export function createPersonaLibrary(container, adapter, options = {}) {
                 } else {
                     // -- plain freeform textarea body --
                     const contentInput = el('textarea', {
-                        class: 'pl-section-content', spellcheck: 'false', placeholder: 'Details for this section\u2026',
+                        class: 'pl-section-content', spellcheck: 'true', placeholder: 'Details for this section\u2026',
                         oninput: () => { dirty = true; s.content = contentInput.value; },
                     });
                     contentInput.value = s.content ?? '';
@@ -1626,7 +1626,7 @@ export function createPersonaLibrary(container, adapter, options = {}) {
                 class: 'pl-icon-btn pl-icon-danger', type: 'button', title: 'Remove variant', onclick: onRemove,
             }, [el('i', { class: 'fa-solid fa-xmark' })]);
             const contentInput = el('textarea', {
-                class: 'pl-section-content', spellcheck: 'false', placeholder: 'What gets added when this is active\u2026',
+                class: 'pl-section-content', spellcheck: 'true', placeholder: 'What gets added when this is active\u2026',
                 oninput: () => {
                     markDirty();
                     node.content = contentInput.value;
@@ -2339,7 +2339,7 @@ export function createPersonaLibrary(container, adapter, options = {}) {
             variantsDraft = normalizeVariants(adapter.getPersonaVariants?.(p.id));
         }
 
-        const coreInput = el('textarea', { spellcheck: 'false', oninput: () => { dirty = true; sectionsDraft.core = coreInput.value; } });
+        const coreInput = el('textarea', { spellcheck: 'true', oninput: () => { dirty = true; sectionsDraft.core = coreInput.value; } });
         coreInput.value = sectionsDraft.core ?? '';
 
         const posSelect = el('select', { onchange: () => { dirty = true; } },
