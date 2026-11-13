@@ -1212,6 +1212,85 @@ export function createPersonaLibrary(container, adapter, options = {}) {
     };
     document.addEventListener('keydown', onGalleryKeydown);
 
+    // -- section category templates -------------------------------------
+    // The nine built-in categories (SECTION_TEMPLATES) plus anything the user
+    // saves. Stored in the extension's own settings as
+    //   { custom: [{ name, fields: [label…] }],   // user-made categories
+    //     edited: { [builtinName]: [label…] },    // built-ins with their fields changed
+    //     hidden: [name…] }                       // names removed from the dropdown
+    // Only the structure (title + field labels) is ever stored, never the text
+    // typed into the fields, so a template stays a template. Read live from the
+    // saved settings every time so the gallery, the chat-bar editor and every
+    // persona always see the same list.
+    const sameName = (a, b) => norm(a).trim() === norm(b).trim();
+    const cleanLabels = (labels) => [...new Set((labels ?? []).map((l) => String(l ?? '').trim()).filter(Boolean))];
+
+    function readTemplateStore() {
+        const live = adapter.getSettings?.()?.sectionTemplates ?? settings.sectionTemplates ?? {};
+        return {
+            custom: Array.isArray(live.custom) ? live.custom.filter((t) => t && t.name && Array.isArray(t.fields)) : [],
+            edited: live.edited && typeof live.edited === 'object' ? { ...live.edited } : {},
+            hidden: Array.isArray(live.hidden) ? [...live.hidden] : [],
+        };
+    }
+    const writeTemplateStore = (store) => persist({ sectionTemplates: store });
+
+    /** Every template, built-in and custom, with its current fields and state. */
+    function allTemplates() {
+        const store = readTemplateStore();
+        const out = SECTION_TEMPLATES.map((t) => {
+            const edited = Array.isArray(store.edited[t.name]);
+            return { name: t.name, fields: edited ? store.edited[t.name] : t.fields, builtin: true, edited, hidden: store.hidden.some((h) => sameName(h, t.name)) };
+        });
+        for (const t of store.custom) {
+            out.push({ name: t.name, fields: t.fields, builtin: false, edited: false, hidden: store.hidden.some((h) => sameName(h, t.name)) });
+        }
+        return out;
+    }
+
+    /** Save a structured section's title + field labels as a template (or update the one with that name). */
+    function saveSectionAsTemplate(section) {
+        const name = (section.title ?? '').trim();
+        const labels = cleanLabels((section.fields ?? []).map((f) => f.label));
+        if (!name) { globalThis.toastr?.warning?.('Give the section a title first — that becomes the template’s name.', 'Persona Library'); return false; }
+        if (!labels.length) { globalThis.toastr?.warning?.('Add at least one field label first.', 'Persona Library'); return false; }
+        const store = readTemplateStore();
+        const builtin = SECTION_TEMPLATES.find((t) => sameName(t.name, name));
+        let verb = 'Saved as template';
+        if (builtin) {
+            if (JSON.stringify(labels) === JSON.stringify(builtin.fields)) delete store.edited[builtin.name];
+            else store.edited[builtin.name] = labels;
+            store.hidden = store.hidden.filter((h) => !sameName(h, builtin.name));
+            verb = 'Template updated:';
+        } else {
+            const i = store.custom.findIndex((t) => sameName(t.name, name));
+            if (i >= 0) { store.custom[i] = { name: store.custom[i].name, fields: labels }; verb = 'Template updated:'; }
+            else store.custom.push({ name, fields: labels });
+            store.hidden = store.hidden.filter((h) => !sameName(h, name));
+        }
+        writeTemplateStore(store);
+        globalThis.toastr?.success?.(`${verb} \u201c${builtin?.name ?? name}\u201d.`, 'Persona Library');
+        return true;
+    }
+
+    function setTemplateHidden(name, hidden) {
+        const store = readTemplateStore();
+        store.hidden = store.hidden.filter((h) => !sameName(h, name));
+        if (hidden) store.hidden.push(name);
+        writeTemplateStore(store);
+    }
+    function resetBuiltinTemplate(name) {
+        const store = readTemplateStore();
+        delete store.edited[name];
+        writeTemplateStore(store);
+    }
+    function deleteCustomTemplate(name) {
+        const store = readTemplateStore();
+        store.custom = store.custom.filter((t) => !sameName(t.name, name));
+        store.hidden = store.hidden.filter((h) => !sameName(h, name));
+        writeTemplateStore(store);
+    }
+
     /**
      * Editable list of extra labeled blocks (Outfit, Scene Details, Lore,
      * Rules, Mood, or a custom title) layered on top of the core
@@ -1223,6 +1302,7 @@ export function createPersonaLibrary(container, adapter, options = {}) {
         const wrap = el('div', { class: 'pl-sections' });
         const list = el('div', { class: 'pl-sections-list' });
         let dragIndex = null;
+        let refreshTemplateSelect = null; // set below, once the dropdown exists
 
         function renderList() {
             list.replaceChildren();
@@ -1242,6 +1322,7 @@ export function createPersonaLibrary(container, adapter, options = {}) {
                     },
                 }, [el('i', { class: 'fa-solid fa-grip-vertical' })]);
 
+                let contentInput = null; // the freeform body's textarea, once built below
                 const titleInput = el('input', {
                     class: 'pl-section-title', type: 'text', value: s.title,
                     oninput: () => {
@@ -1260,7 +1341,14 @@ export function createPersonaLibrary(container, adapter, options = {}) {
                     onclick: () => { dirty = true; draft.sections.splice(i, 1); renderList(); },
                 }, [el('i', { class: 'fa-solid fa-xmark' })]);
 
-                const head = el('div', { class: 'pl-section-row-head' }, [handle, enabledBox, titleInput, removeBtn]);
+                // Structured (character-sheet) sections get a tiny bookmark: save this
+                // title + field set as a template, or update the template of that name.
+                const saveTplBtn = canEdit && Array.isArray(s.fields) ? el('button', {
+                    class: 'pl-icon-btn pl-section-tpl-btn', type: 'button',
+                    title: 'Save as template (reusable in every persona)',
+                    onclick: () => { if (saveSectionAsTemplate(s)) refreshTemplateSelect?.(); },
+                }, [el('i', { class: 'fa-regular fa-bookmark' })]) : null;
+                const head = el('div', { class: 'pl-section-row-head' }, [handle, enabledBox, titleInput, saveTplBtn, removeBtn]);
 
                 let body;
                 if (Array.isArray(s.fields)) {
@@ -1310,7 +1398,7 @@ export function createPersonaLibrary(container, adapter, options = {}) {
                     if (!canEdit) addFieldBtn?.setAttribute?.('disabled', '');
                 } else {
                     // -- plain freeform textarea body --
-                    const contentInput = el('textarea', {
+                    contentInput = el('textarea', {
                         class: 'pl-section-content', spellcheck: 'true', placeholder: 'Details for this section\u2026',
                         oninput: () => { dirty = true; s.content = contentInput.value; },
                     });
@@ -1364,23 +1452,55 @@ export function createPersonaLibrary(container, adapter, options = {}) {
             },
         });
 
-        const templateSelect = el('select', { class: 'pl-select' },
-            SECTION_TEMPLATES.map((t) => el('option', { value: t.name, text: t.name })));
-
+        const templateSelect = el('select', { class: 'pl-select' });
         const addTemplateBtn = el('button', {
             class: 'pl-btn', type: 'button', text: '+ Add category',
             onclick: () => {
-                dirty = true;
-                const tpl = SECTION_TEMPLATES.find((t) => t.name === templateSelect.value);
+                const tpl = allTemplates().find((t) => !t.hidden && t.name === templateSelect.value);
                 if (!tpl) return;
+                dirty = true;
                 const fields = tpl.fields.map((label) => ({ label, value: '' }));
                 draft.sections.push({ title: tpl.name, enabled: true, fields, content: fieldsToContent(fields) });
                 renderList();
             },
         });
+        // Rebuild the dropdown from the live template list (hidden ones left out).
+        refreshTemplateSelect = () => {
+            const keep = templateSelect.value;
+            const visible = allTemplates().filter((t) => !t.hidden);
+            templateSelect.replaceChildren(...visible.map((t) => el('option', { value: t.name, text: t.name })));
+            if (visible.some((t) => t.name === keep)) templateSelect.value = keep;
+            templateSelect.disabled = addTemplateBtn.disabled = !visible.length;
+            if (!visible.length) templateSelect.append(el('option', { text: 'No templates shown' }));
+        };
 
-        const addRow = el('div', { class: 'pl-sections-add' }, canEdit ? [addBtn] : []);
-        const addTemplateRow = el('div', { class: 'pl-sections-add' }, canEdit ? [templateSelect, addTemplateBtn] : []);
+        // The manager is deliberately just a small \u22ef beside the dropdown: a menu
+        // where a tick shows/hides a template, with reset (edited built-ins) and
+        // delete (your own) below it. Reopens after each click so several can be done at once.
+        function openTemplateManager(anchor) {
+            const r = anchor.getBoundingClientRect();
+            const all = allTemplates();
+            const items = [{ title: 'Templates \u2014 tick to show in the list' }];
+            const again = () => { refreshTemplateSelect(); openTemplateManager(anchor); };
+            for (const t of all) {
+                items.push({ icon: 'fa-table-list', label: t.name + (t.edited ? ' (edited)' : ''), checked: !t.hidden, onClick: () => { setTemplateHidden(t.name, !t.hidden); again(); } });
+            }
+            const edited = all.filter((t) => t.edited);
+            const custom = all.filter((t) => !t.builtin);
+            if (edited.length || custom.length) items.push('sep');
+            for (const t of edited) items.push({ icon: 'fa-rotate-left', label: `Reset \u201c${t.name}\u201d to default`, onClick: () => { resetBuiltinTemplate(t.name); again(); } });
+            for (const t of custom) items.push({ icon: 'fa-trash', label: `Delete \u201c${t.name}\u201d`, danger: true, onClick: () => { deleteCustomTemplate(t.name); again(); } });
+            ctxMenu.open({ x: r.left, y: r.bottom + 4, anchorRect: r, items });
+        }
+        const manageTemplatesBtn = el('button', {
+            class: 'pl-icon-btn pl-tpl-manage-btn', type: 'button', title: 'Manage category templates',
+            'aria-haspopup': 'menu',
+            onclick: (e) => { e.stopPropagation(); openTemplateManager(manageTemplatesBtn); },
+        }, [el('i', { class: 'fa-solid fa-ellipsis' })]);
+        refreshTemplateSelect();
+
+                const addRow = el('div', { class: 'pl-sections-add' }, canEdit ? [addBtn] : []);
+        const addTemplateRow = el('div', { class: 'pl-sections-add' }, canEdit ? [templateSelect, addTemplateBtn, manageTemplatesBtn] : []);
 
         wrap.append(
             el('h4', { text: 'Additional Sections' }),

@@ -1333,6 +1333,21 @@
     flex: 0 0 auto;
 }
 
+/* Template controls: tiny and quiet until you reach for them. */
+.pl-section-row-head .pl-section-tpl-btn,
+.pl-icon-btn.pl-tpl-manage-btn {
+    opacity: 0.45;
+    font-size: 0.85em;
+}
+.pl-section-row-head .pl-section-tpl-btn:hover,
+.pl-section-row:hover .pl-section-tpl-btn,
+.pl-icon-btn.pl-tpl-manage-btn:hover { opacity: 1; }
+.pl-icon-btn.pl-tpl-manage-btn {
+    width: 26px;
+    height: 26px;
+    flex: 0 0 auto;
+}
+
 .pl-section-content {
     min-height: 60px;
     resize: vertical;
@@ -2578,7 +2593,6 @@ body.pl-active #PersonaManagement {
     color: #f5b942;
 }
 .pl-ctx-item .pl-ctx-tick.pl-ctx-tick-off { visibility: hidden; }
-.pl-ctx-item.pl-ctx-on { color: #f5b942; }
 
 /* ---------- Compare picker (chat-bar "Compare with\u2026") ---------- */
 

@@ -12,6 +12,7 @@ the other.
 ## v1.10.2
 
 ### Changed
+- Section category templates: the character-sheet categories are no longer fixed. A small bookmark on each category section saves its title and field labels as a template (or updates the template of the same name, built-ins included), and it appears in the "Ready-made character-sheet category" dropdown for every persona. A small ⋯ beside the dropdown lets you hide any template (built-in or yours), reset an edited built-in, or delete your own. Only the structure is saved, never the text typed into the fields.
 - The star on gallery tiles is now a vertical three-dot "more" indicator (shown on hover) that opens the same menu as a right-click. Favorited personas show three small yellow stars stacked vertically instead (also on hover only), which open the same menu — favoriting and unfavoriting live there.
 - Header declutter: the three lock buttons (Default / Character / Chat) are now a single padlock-with-arrow dropdown. Click it to toggle any lock; the menu stays open so you can set several at once, and the padlock turns amber when any lock is on.
 - The incarnation arrow is now a slim caret attached to the right of the "Use this persona" check (before the lock dropdown) instead of a square button of its own.
