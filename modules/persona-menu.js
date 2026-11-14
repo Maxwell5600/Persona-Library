@@ -22,6 +22,16 @@ const el = (tag, props = {}, children = []) => {
 };
 
 /**
+ * How an incarnation is written wherever they're listed: "Name", or
+ * "Name (tag)" when the user has tagged it. Tags are free text and optional
+ * for every incarnation, the original included (it has none by default).
+ */
+export function incarnationLabel(inc) {
+    const tag = (inc?.tag ?? '').trim();
+    return tag ? `${inc.name} (${tag})` : inc?.name ?? '';
+}
+
+/**
  * Builds the item list.
  * @param {{id:string,name:string}} p
  * @param {object} o
@@ -50,7 +60,7 @@ export function personaMenuItems(p, { isActive, isFav, canCompare = true, incarn
         for (const inc of incarnations.list) {
             items.push({
                 icon: inc.active ? 'fa-circle-dot' : 'fa-circle',
-                label: inc.isOriginal ? `${inc.name} (original)` : inc.name,
+                label: incarnationLabel(inc),
                 disabled: inc.active,
                 keepOpen: true,
                 onClick: () => a.switchIncarnation(p, inc.key),

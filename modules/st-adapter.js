@@ -1466,6 +1466,7 @@ export function getPersonaIncarnations(id) {
                 key: sl.key,
                 isOriginal: sl.key === MAIN_INC,
                 active,
+                tag: typeof sl.tag === 'string' ? sl.tag : '',
                 name: active ? personaNameOf(id) : sl.name,
                 imageCount: (active ? galleryStore()[id]?.images?.length : sl.snapshot?.gallery?.images?.length) ?? 0,
             };
@@ -1587,6 +1588,25 @@ export function switchPersonaIncarnation(id, key) {
     return galleryEnqueue(id, () => switchIncarnationInner(id, key));
 }
 
+const MAX_INC_TAG = 40;
+const cleanIncTag = (t) => String(t ?? '').replace(/[()]/g, '').replace(/\s+/g, ' ').trim().slice(0, MAX_INC_TAG);
+
+/**
+ * Sets (or clears, with '') an incarnation's tag \u2014 a short free-text label
+ * shown as "Name (tag)" wherever incarnations are listed. Display-only: it is
+ * never part of the persona's name, so it is never sent anywhere. Works on any
+ * incarnation, the original included (which has no tag unless the user gives it one).
+ */
+export function setPersonaIncarnationTag(id, key, tag) {
+    const rec = incStore()[id];
+    const slot = incSlot(rec, key);
+    if (!slot) throw new Error('Incarnation not found.');
+    const t = cleanIncTag(tag);
+    if (t) slot.tag = t; else delete slot.tag;
+    ctx()?.saveSettingsDebounced?.();
+    notifyPersonaUpdated(id);
+}
+
 /**
  * Builds a brand-new incarnation snapshot — either blank, or a ONE-TIME copy
  * of selected parts of `srcSnap`. After this nothing links it to its source.
@@ -1626,11 +1646,15 @@ async function buildIncarnation(id, { srcSnap, srcPortraitBlob, newKey, name, co
 /**
  * Creates a new incarnation and switches to it.
  * @param {string} id persona id
- * @param {{ name: string, sourceKey?: string, copy?: null | { core?: boolean, sections?: boolean, variants?: boolean, images?: boolean, settings?: boolean } }} opts
- *   copy = null → blank slate; otherwise a one-time copy of the ticked parts
- *   from `sourceKey` (default: the currently live incarnation).
+ * @param {{ name: string, tag?: string, sourceKey?: string, sourcePersonaId?: string, copy?: null | { core?: boolean, sections?: boolean, variants?: boolean, images?: boolean, settings?: boolean } }} opts
+ *   copy = null \u2192 blank slate; otherwise a one-time copy of the ticked parts
+ *   from `sourceKey` (default: that persona's currently live incarnation).
+ *   sourcePersonaId = copy from a DIFFERENT persona entirely (e.g. someone who
+ *   kept "Steve (Fighter)" and "Steve (Ranger)" as separate personas and wants
+ *   to fold them together). `sourceKey` then refers to one of THAT persona's
+ *   incarnations. The source persona is only read, never changed.
  */
-export function createPersonaIncarnation(id, { name, sourceKey, copy = null } = {}) {
+export function createPersonaIncarnation(id, { name, tag, sourceKey, sourcePersonaId, copy = null } = {}) {
     return galleryEnqueue(id, async () => {
         guardNoGeneration(id);
         const trimmed = (name ?? '').trim();
@@ -1645,21 +1669,28 @@ export function createPersonaIncarnation(id, { name, sourceKey, copy = null } = 
         const newKey = incUid();
         let built = null;
         try {
-            // Resolve the copy source (live data, or a parked slot).
-            const srcKey = sourceKey && incSlot(rec, sourceKey) ? sourceKey : rec.activeKey;
-            const srcIsLive = srcKey === rec.activeKey;
-            const srcSlot = incSlot(rec, srcKey);
-            const srcSnap = srcIsLive ? captureLive(id) : srcSlot.snapshot;
+            // Resolve the copy source: this persona or another one; its live data or a parked slot.
+            const srcId = sourcePersonaId && sourcePersonaId !== id ? sourcePersonaId : id;
+            if (srcId !== id && !(srcId in (powerUser().personas ?? {}))) throw new Error('The persona to copy from no longer exists.');
+            const srcRec = srcId === id ? rec : store[srcId];
+            const srcLiveKey = srcRec?.activeKey ?? MAIN_INC;
+            const srcKey = sourceKey && (srcRec ? incSlot(srcRec, sourceKey) : sourceKey === MAIN_INC) ? sourceKey : srcLiveKey;
+            const srcIsLive = srcKey === srcLiveKey;
+            const srcSlot = srcRec ? incSlot(srcRec, srcKey) : null;
+            const srcSnap = srcIsLive ? captureLive(srcId) : srcSlot?.snapshot;
             if (!srcSnap) throw new Error('The copy source\u2019s data is missing.');
             const srcPortraitBlob = srcIsLive
-                ? () => fetchAvatarBlob(id)
+                ? () => fetchAvatarBlob(srcId)
                 : async () => {
                     const res = await fetch(galleryUrl(srcSlot.portrait.path), { cache: 'no-cache' });
                     if (!res.ok) throw new Error('The copy source\u2019s portrait file is missing.');
                     return await res.blob();
                 };
             built = await buildIncarnation(id, { srcSnap, srcPortraitBlob, newKey, name: trimmed, copy });
-            rec.slots.push({ key: newKey, name: trimmed, snapshot: built.snapshot, portrait: built.portrait });
+            const newSlot = { key: newKey, name: trimmed, snapshot: built.snapshot, portrait: built.portrait };
+            const t = cleanIncTag(tag);
+            if (t) newSlot.tag = t;
+            rec.slots.push(newSlot);
             await switchIncarnationInner(id, newKey);
         } catch (e) {
             // Roll back a brand-new record entirely; otherwise keep any slot that did get created (it is a valid, parked incarnation).
@@ -1938,6 +1969,7 @@ export const stAdapter = {
     applyBoundImageForActivePersona,
     getPersonaIncarnations,
     createPersonaIncarnation,
+    setPersonaIncarnationTag,
     switchPersonaIncarnation,
     deletePersonaIncarnation,
     createPersona,

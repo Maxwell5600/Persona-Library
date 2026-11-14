@@ -44,7 +44,7 @@ import { newItem, newGroup, cloneNode, normalizeVariants, composeVariants, colle
 import { sortPersonas, createTokenCounter, isTokenSort } from './persona-sort.js';
 import { diffText } from './text-diff.js';
 import { createImageViewer } from './image-viewer.js';
-import { createContextMenu, personaMenuItems } from './persona-menu.js';
+import { createContextMenu, personaMenuItems, incarnationLabel } from './persona-menu.js';
 import { onLibraryChanged, emitLibraryChanged } from './library-bridge.js';
 
 const POSITIONS = [
@@ -597,7 +597,7 @@ export function createPersonaLibrary(container, adapter, options = {}) {
             if (!q) return true;
             if (norm(p.name).includes(q) || norm(p.description).includes(q)) return true;
             // Searching "Steve M" should still find Steve, whichever incarnation is live.
-            return !!adapter.getPersonaIncarnations?.(p.id)?.list?.some((inc) => norm(inc.name).includes(q));
+            return !!adapter.getPersonaIncarnations?.(p.id)?.list?.some((inc) => norm(incarnationLabel(inc)).includes(q));
         });
         return sortPersonas(list, settings.sort, {
             activeId: adapter.getActiveId?.() ?? null,
@@ -901,7 +901,7 @@ export function createPersonaLibrary(container, adapter, options = {}) {
     async function deleteIncarnationFlow(p, inc) {
         const n = inc.imageCount ? ` and ${inc.imageCount} gallery image${inc.imageCount === 1 ? '' : 's'}` : '';
         const back = inc.active ? ' You will be returned to the original.' : '';
-        if (!await askConfirm(`Delete incarnation \u201c${inc.name}\u201d? Its description, sections, variants, bindings${n} are deleted permanently.${back} The original and any other incarnations are not affected.`)) return;
+        if (!await askConfirm(`Delete incarnation \u201c${incarnationLabel(inc)}\u201d? Its description, sections, variants, bindings${n} are deleted permanently.${back} The original and any other incarnations are not affected.`)) return;
         await incarnationAction(p.id, () => adapter.deletePersonaIncarnation(p.id, inc.key), 'Incarnation deleted.', 'Could not delete incarnation.', { skipDirtyCheck: !inc.active });
     }
 
@@ -911,16 +911,69 @@ export function createPersonaLibrary(container, adapter, options = {}) {
         if (!adapter.getPersonaIncarnations?.(id)) openIncarnationDialog(id);
     }
 
+    /** Suggestions for the tag inputs: "Original" (the optional tag for an original) plus any tag already used on this persona. */
+    function tagSuggestions(info) {
+        const used = (info?.list ?? []).map((i) => i.tag).filter(Boolean);
+        return [...new Set(['Original', ...used])];
+    }
+    const tagDatalist = (idSuffix, info) => el('datalist', { id: `pl-tag-suggest-${idSuffix}` }, tagSuggestions(info).map((t) => el('option', { value: t })));
+
+    /** Small editor: one tag field per incarnation, original included. Empty = no tag. */
+    async function openIncarnationTagsDialog(id) {
+        const info = adapter.getPersonaIncarnations?.(id) ?? null;
+        if (!info?.list?.length || !adapter.setPersonaIncarnationTag) return;
+        const listId = `tags-${Math.random().toString(36).slice(2, 7)}`;
+        const rows = info.list.map((inc) => {
+            const input = el('input', {
+                type: 'text', class: 'pl-name-input pl-tag-input', value: inc.tag ?? '', maxlength: '40',
+                placeholder: 'no tag', list: `pl-tag-suggest-${listId}`,
+            });
+            return { inc, input, row: el('div', { class: 'pl-tag-row' }, [el('span', { class: 'pl-tag-name', text: inc.name + (inc.active ? '  · active' : '') }), input]) };
+        });
+        const saveBtn = el('button', { class: 'pl-btn pl-primary', type: 'button', text: 'Save tags' });
+        saveBtn.onclick = async () => {
+            try {
+                for (const { inc, input } of rows) {
+                    if (input.value.trim() !== (inc.tag ?? '')) await adapter.setPersonaIncarnationTag(id, inc.key, input.value);
+                }
+                closeDialog();
+                lastFingerprint = null;
+                refresh();
+                emitLibraryChanged(changeSource);
+            } catch (e) {
+                console.error('[PersonaLibrary] tag save failed', e);
+                globalThis.toastr?.error?.(`Could not save tags. ${e?.message ?? ''}`.trim(), 'Persona Library');
+            }
+        };
+        openDialog(el('div', { class: 'pl-dialog-modal' }, [
+            el('div', { class: 'pl-dialog-title', text: 'Incarnation tags' }),
+            el('div', { class: 'pl-dialog-body' }, [
+                el('div', { class: 'pl-sections-hint', text: 'A tag shows after the name, like “Steve (Fighter)”. Optional for every incarnation — including the original, which has none until you give it one (try “Original”).' }),
+                ...rows.map((r) => r.row),
+                tagDatalist(listId, info),
+            ]),
+            el('div', { class: 'pl-dialog-actions' }, [el('button', { class: 'pl-btn', type: 'button', text: 'Cancel', onclick: () => closeDialog() }), saveBtn]),
+        ]));
+        rows[0]?.input.focus();
+    }
+
     async function openIncarnationDialog(id) {
         if (!adapter.createPersonaIncarnation) return;
         const p = (adapter.getPersonas() ?? []).find((x) => x.id === id);
         if (!p) return;
         if (!await confirmDiscardIfDirty(id)) return;
         const info = adapter.getPersonaIncarnations?.(id) ?? null;
+        const others = sortPersonas((adapter.getPersonas() ?? []).filter((x) => x.id !== id), 'name');
+        const listId = `new-${Math.random().toString(36).slice(2, 7)}`;
 
         const nameInput = el('input', { type: 'text', class: 'pl-name-input', placeholder: `e.g. ${p.name} Z`, maxlength: '120' });
+        const tagInput = el('input', { type: 'text', class: 'pl-name-input', placeholder: 'optional, e.g. Fighter', maxlength: '40', list: `pl-tag-suggest-${listId}` });
+        let nameTouched = false;
+        nameInput.addEventListener('input', () => { nameTouched = true; });
+
         const modeBlank = el('input', { type: 'radio', name: 'pl-inc-mode', value: 'blank', checked: true });
         const modeCopy = el('input', { type: 'radio', name: 'pl-inc-mode', value: 'copy' });
+        const modeOther = others.length ? el('input', { type: 'radio', name: 'pl-inc-mode', value: 'other' }) : null;
         const COPY_OPTIONS = [
             ['core', 'Core description', true],
             ['sections', 'Additional sections (appearance, personality, etc.)', true],
@@ -929,27 +982,78 @@ export function createPersonaLibrary(container, adapter, options = {}) {
             ['settings', 'Injection position, depth, role & lorebook', true],
         ];
         const checks = Object.fromEntries(COPY_OPTIONS.map(([k, , on]) => [k, el('input', { type: 'checkbox', checked: on })]));
-        const sourceSelect = info && el('select', { class: 'pl-select' }, info.list.map((inc) => el('option', { value: inc.key, text: inc.name, selected: inc.active })));
+        const sourceSelect = info && el('select', { class: 'pl-select' }, info.list.map((inc) => el('option', { value: inc.key, text: incarnationLabel(inc), selected: inc.active })));
+        const ownRow = sourceSelect && el('div', { class: 'pl-field' }, [el('label', { text: 'Copy from' }), sourceSelect]);
+
+        // -- "another persona": searchable list over the whole library --------
+        let pickedId = null;
+        const search = el('input', { type: 'search', class: 'pl-search pl-pick-search', placeholder: `Search ${others.length} persona${others.length === 1 ? '' : 's'}…` });
+        const pickList = el('div', { class: 'pl-pick-list pl-pick-compact' });
+        const pickedLine = el('div', { class: 'pl-pick-selected-line', text: 'Nothing selected yet.' });
+        const otherIncSelect = el('select', { class: 'pl-select' });
+        const otherIncRow = el('div', { class: 'pl-field', hidden: true }, [el('label', { text: 'Which incarnation' }), otherIncSelect]);
+        const pick = (other) => {
+            pickedId = other.id;
+            pickedLine.textContent = `Copying from “${other.name}”`;
+            if (!nameTouched) nameInput.value = other.name;
+            const oi = adapter.getPersonaIncarnations?.(other.id) ?? null;
+            otherIncSelect.replaceChildren(...(oi?.list ?? []).map((inc) => el('option', { value: inc.key, text: incarnationLabel(inc), selected: inc.active })));
+            otherIncRow.hidden = !oi;
+            renderPickList();
+        };
+        function renderPickList() {
+            const q = norm(search.value).trim();
+            const rows = others.filter((x) => !q || norm(x.name).includes(q));
+            pickList.replaceChildren(...(rows.length ? rows.map((x) => el('button', {
+                class: `pl-pick-row${x.id === pickedId ? ' pl-selected' : ''}`, type: 'button', onclick: () => pick(x),
+            }, [
+                personaImg({ class: 'pl-pick-thumb', alt: x.name, loading: 'lazy', decoding: 'async', src: x.image }, x.id, adapter),
+                el('span', { class: 'pl-pick-name', text: x.name }),
+                x.incarnationCount > 1 ? el('span', { class: 'pl-pick-meta', text: `${x.incarnationCount} incarnations` }) : null,
+            ].filter(Boolean))) : [el('div', { class: 'pl-pick-empty', text: 'No personas match.' })]));
+        }
+        search.addEventListener('input', renderPickList);
+        search.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            const q = norm(search.value).trim();
+            const first = others.find((x) => !q || norm(x.name).includes(q));
+            if (first) pick(first);
+        });
+        renderPickList();
+        const otherBox = el('div', { class: 'pl-dialog-other', hidden: true }, [search, pickList, pickedLine, otherIncRow]);
+
         const copyBox = el('div', { class: 'pl-dialog-copy', hidden: true }, [
-            sourceSelect && el('div', { class: 'pl-field' }, [el('label', { text: 'Copy from' }), sourceSelect]),
+            ownRow,
+            otherBox,
             el('div', { class: 'pl-dialog-checks' }, COPY_OPTIONS.map(([k, label]) => el('label', { class: 'pl-dialog-check' }, [checks[k], el('span', { text: label })]))),
-            el('div', { class: 'pl-sections-hint', text: 'This is a one-time copy. Once created, the new incarnation is completely independent — editing either one never changes the other. Character connections and bindings are not copied.' }),
+            el('div', { class: 'pl-sections-hint', text: 'This is a one-time copy. Once created, the new incarnation is completely independent — editing either one never changes the other (and the persona you copy from is never changed). Character connections and bindings are not copied.' }),
         ].filter(Boolean));
-        const syncMode = () => { copyBox.hidden = !modeCopy.checked; };
-        modeBlank.addEventListener('change', syncMode);
-        modeCopy.addEventListener('change', syncMode);
+        const syncMode = () => {
+            const other = !!modeOther?.checked;
+            copyBox.hidden = !modeCopy.checked && !other;
+            if (ownRow) ownRow.hidden = other;
+            otherBox.hidden = !other;
+            if (other) search.focus();
+        };
+        for (const m of [modeBlank, modeCopy, modeOther]) m?.addEventListener('change', syncMode);
 
         const createBtn = el('button', { class: 'pl-btn pl-primary', type: 'button', text: 'Create & switch' });
         const cancelBtn = el('button', { class: 'pl-btn', type: 'button', text: 'Cancel', onclick: () => closeDialog() });
         createBtn.onclick = async () => {
             const name = nameInput.value.trim();
             if (!name) { globalThis.toastr?.warning?.('Give the incarnation a name.', 'Persona Library'); nameInput.focus(); return; }
-            const copy = modeCopy.checked ? Object.fromEntries(COPY_OPTIONS.map(([k]) => [k, checks[k].checked])) : null;
+            const fromOther = !!modeOther?.checked;
+            if (fromOther && !pickedId) { globalThis.toastr?.warning?.('Pick a persona to copy from.', 'Persona Library'); search.focus(); return; }
+            const copy = (modeCopy.checked || fromOther) ? Object.fromEntries(COPY_OPTIONS.map(([k]) => [k, checks[k].checked])) : null;
+            const opts = { name, tag: tagInput.value, copy };
+            if (fromOther) { opts.sourcePersonaId = pickedId; opts.sourceKey = otherIncSelect.value || undefined; }
+            else opts.sourceKey = sourceSelect?.value;
             dialogBusy = true;
             createBtn.disabled = true; cancelBtn.disabled = true;
-            createBtn.textContent = 'Creating\u2026';
+            createBtn.textContent = 'Creating…';
             const okd = await incarnationAction(id,
-                () => adapter.createPersonaIncarnation(id, { name, sourceKey: sourceSelect?.value, copy }),
+                () => adapter.createPersonaIncarnation(id, opts),
                 'Incarnation created.', 'Could not create incarnation.', { skipDirtyCheck: true });
             dialogBusy = false;
             if (okd) closeDialog();
@@ -958,13 +1062,15 @@ export function createPersonaLibrary(container, adapter, options = {}) {
         nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') createBtn.click(); });
 
         openDialog(el('div', { class: 'pl-dialog-modal' }, [
-            el('div', { class: 'pl-dialog-title', text: `New incarnation of \u201c${info?.list?.find((x) => x.isOriginal)?.name ?? p.name}\u201d` }),
+            el('div', { class: 'pl-dialog-title', text: `New incarnation of “${info?.list?.find((x) => x.isOriginal)?.name ?? p.name}”` }),
             el('div', { class: 'pl-dialog-body' }, [
                 el('div', { class: 'pl-field' }, [el('label', { text: 'Name' }), nameInput]),
+                adapter.setPersonaIncarnationTag && el('div', { class: 'pl-field' }, [el('label', { text: 'Tag (optional)' }), tagInput, tagDatalist(listId, info)]),
                 el('label', { class: 'pl-dialog-check' }, [modeBlank, el('span', { text: 'Start with a blank slate' })]),
                 el('label', { class: 'pl-dialog-check' }, [modeCopy, el('span', { text: 'Copy from an existing incarnation' })]),
+                modeOther && el('label', { class: 'pl-dialog-check' }, [modeOther, el('span', { text: 'Copy from another persona' })]),
                 copyBox,
-            ]),
+            ].filter(Boolean)),
             el('div', { class: 'pl-dialog-actions' }, [cancelBtn, createBtn]),
         ]));
         nameInput.focus();
@@ -981,7 +1087,8 @@ export function createPersonaLibrary(container, adapter, options = {}) {
     function buildIncarnationMenuBtn(p) {
         const info = adapter.getPersonaIncarnations?.(p.id) ?? null;
         const count = info?.list?.length ?? 0;
-        const activeName = info?.list?.find((i) => i.active)?.name ?? '';
+        const activeInc = info?.list?.find((i) => i.active);
+        const activeName = activeInc ? incarnationLabel(activeInc) : '';
         const btn = el('button', {
             class: `pl-icon-btn pl-inc-menu-btn${count > 1 ? ' pl-has-incarnations' : ''}`, type: 'button',
             title: count > 1 ? `Incarnations (${count}) \u00b7 showing \u201c${activeName}\u201d` : 'Incarnations \u2014 add a separate version of this persona',
@@ -995,18 +1102,21 @@ export function createPersonaLibrary(container, adapter, options = {}) {
             for (const inc of fresh?.list ?? []) {
                 items.push({
                     icon: inc.active ? 'fa-circle-dot' : 'fa-circle',
-                    label: inc.isOriginal ? `${inc.name} (original)` : inc.name,
+                    label: incarnationLabel(inc),
                     disabled: inc.active,
                     onClick: () => switchIncarnationFlow(p.id, inc.key),
                 });
             }
             if (fresh?.list?.length) items.push('sep');
             items.push({ icon: 'fa-plus', label: 'New incarnation\u2026', onClick: () => openIncarnationDialog(p.id) });
+            if (fresh?.list?.length && adapter.setPersonaIncarnationTag) {
+                items.push({ icon: 'fa-tag', label: 'Edit tags\u2026', onClick: () => openIncarnationTagsDialog(p.id) });
+            }
             const deletable = (fresh?.list ?? []).filter((i) => !i.isOriginal);
             if (deletable.length) {
                 items.push('sep');
                 for (const inc of deletable) {
-                    items.push({ icon: 'fa-trash', label: `Delete \u201c${inc.name}\u201d\u2026`, danger: true, onClick: () => deleteIncarnationFlow(p, inc) });
+                    items.push({ icon: 'fa-trash', label: `Delete \u201c${incarnationLabel(inc)}\u201d\u2026`, danger: true, onClick: () => deleteIncarnationFlow(p, inc) });
                 }
             }
             ctxMenu.open({ x: r.left, y: r.bottom + 4, anchorRect: r, items });

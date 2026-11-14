@@ -2766,3 +2766,25 @@ body.pl-active #PersonaManagement {
 
 /* Keep a long name from running under the incarnation badge (bottom-right). */
 .pl-tile-cell:has(.pl-tile-inc) .pl-tile-name { padding-right: 48px; }
+
+/* ---------- Incarnation dialogs: tags + "copy from another persona" ---------- */
+
+.pl-dialog-other { display: flex; flex-direction: column; gap: 8px; }
+.pl-pick-list.pl-pick-compact { max-height: 210px; }
+.pl-pick-row.pl-selected {
+    background: color-mix(in srgb, var(--pl-accent) 35%, transparent);
+    box-shadow: inset 0 0 0 1px var(--pl-accent);
+}
+.pl-pick-meta { flex: 0 0 auto; font-size: 0.75em; opacity: 0.65; }
+.pl-pick-selected-line { font-size: 0.85em; opacity: 0.75; }
+
+.pl-tag-row { display: flex; align-items: center; gap: 10px; }
+.pl-tag-name { flex: 1 1 45%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-tag-row .pl-tag-input { flex: 1 1 55%; min-width: 0; }
+
+/* The pickers stack vertically, where .pl-search's toolbar sizing (flex-basis
+   160px) would stretch it into a tall pill; and `display:flex` rules on these
+   containers would otherwise beat the [hidden] attribute. */
+.pl-pick-search { flex: 0 0 auto; }
+.pl-dialog-other[hidden],
+.pl-dialog-copy .pl-field[hidden] { display: none; }

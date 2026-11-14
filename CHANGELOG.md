@@ -12,12 +12,15 @@ the other.
 ## v1.10.2
 
 ### Changed
+- Incarnation tags: every incarnation can now carry an optional tag, shown after its name like “Steve (Fighter)” — the same way the original used to be marked. Set one when creating an incarnation, or edit any of them (the original included) from “Edit tags…” in the incarnation dropdown. The automatic “(original)” label is gone: a persona’s original is now just “Steve” unless you tag it yourself (try “Original”). Tags are display-only and never become part of the persona’s name.
+- New incarnations can be copied from another persona. A third option in the New incarnation window, “Copy from another persona”, offers a searchable list of your whole library (plus a picker for that persona’s own incarnations, if it has any) — handy for folding separate “Steve (Fighter)” / “Steve (Ranger)” personas into one persona’s incarnations. It’s a one-time copy and the persona you copy from is never changed.
 - Section category templates: the character-sheet categories are no longer fixed. A small bookmark on each category section saves its title and field labels as a template (or updates the template of the same name, built-ins included), and it appears in the "Ready-made character-sheet category" dropdown for every persona. A small ⋯ beside the dropdown lets you hide any template (built-in or yours), reset an edited built-in, or delete your own. Only the structure is saved, never the text typed into the fields.
 - The star on gallery tiles is now a vertical three-dot "more" indicator (shown on hover) that opens the same menu as a right-click. Favorited personas show three small yellow stars stacked vertically instead (also on hover only), which open the same menu — favoriting and unfavoriting live there.
 - Header declutter: the three lock buttons (Default / Character / Chat) are now a single padlock-with-arrow dropdown. Click it to toggle any lock; the menu stays open so you can set several at once, and the padlock turns amber when any lock is on.
 - The incarnation arrow is now a slim caret attached to the right of the "Use this persona" check (before the lock dropdown) instead of a square button of its own.
 
 ### Fixed
+- The Compare picker’s search box no longer stretches tall.
 - Menus (such as the category templates list) opening far from their button, or cut off, when SillyTavern's drawer traps fixed-position elements — they now place themselves relative to where they actually are.
 - Spell check now works in the expanded text editor and in the core description and section text boxes (it had been switched off).
 - Right-clicking a persona in the chat-bar Quick Switcher no longer jumps into the Persona Management gallery. Edit, Open image gallery, Compare with… and Manage incarnations now open right over the chat (and work even if the Persona tab was never opened). Compare uses a searchable picker list. The gallery's own right-click menu is unchanged. Changes made in either place show up in the other immediately.
