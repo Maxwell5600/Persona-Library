@@ -18,6 +18,7 @@ the other.
 - The incarnation arrow is now a slim caret attached to the right of the "Use this persona" check (before the lock dropdown) instead of a square button of its own.
 
 ### Fixed
+- Menus (such as the category templates list) opening far from their button, or cut off, when SillyTavern's drawer traps fixed-position elements — they now place themselves relative to where they actually are.
 - Spell check now works in the expanded text editor and in the core description and section text boxes (it had been switched off).
 - Right-clicking a persona in the chat-bar Quick Switcher no longer jumps into the Persona Management gallery. Edit, Open image gallery, Compare with… and Manage incarnations now open right over the chat (and work even if the Persona tab was never opened). Compare uses a searchable picker list. The gallery's own right-click menu is unchanged. Changes made in either place show up in the other immediately.
 

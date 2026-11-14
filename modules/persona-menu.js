@@ -106,8 +106,23 @@ export function createContextMenu(mountOn) {
             px = anchorRect.left + anchorRect.width / 2;
             py = anchorRect.top + anchorRect.height / 2;
         }
-        menu.style.left = `${Math.max(4, Math.min(px, window.innerWidth - menu.offsetWidth - 4))}px`;
-        menu.style.top = `${Math.max(4, Math.min(py, window.innerHeight - menu.offsetHeight - 4))}px`;
+        // `px`/`py` are screen coordinates, but `position: fixed` is only relative
+        // to the screen when no ancestor traps it. SillyTavern's drawer (with a
+        // blur / transform, depending on the theme) does exactly that for menus
+        // mounted inside it, which is deliberate (see gallery.js), so measure
+        // where this menu's real containing block is with a throwaway invisible
+        // probe, then place and clamp inside THAT, not the window.
+        const probe = el('div');
+        probe.style.cssText = 'position:fixed;inset:0;visibility:hidden;pointer-events:none;';
+        mountOn.appendChild(probe);
+        const cb = probe.getBoundingClientRect();
+        probe.remove();
+        const minX = Math.max(cb.left, 0) + 4;
+        const minY = Math.max(cb.top, 0) + 4;
+        const maxX = Math.min(cb.right, window.innerWidth) - menu.offsetWidth - 4;
+        const maxY = Math.min(cb.bottom, window.innerHeight) - menu.offsetHeight - 4;
+        menu.style.left = `${Math.max(minX, Math.min(px, maxX)) - cb.left}px`;
+        menu.style.top = `${Math.max(minY, Math.min(py, maxY)) - cb.top}px`;
 
         const onDown = (ev) => { if (!menu.contains(ev.target)) close(); };
         const onKey = (ev) => {
