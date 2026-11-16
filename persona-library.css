@@ -2788,3 +2788,25 @@ body.pl-active #PersonaManagement {
 .pl-pick-search { flex: 0 0 auto; }
 .pl-dialog-other[hidden],
 .pl-dialog-copy .pl-field[hidden] { display: none; }
+
+/* Reusable tags: a tiny caret inside the tag field opens a small floating, scrolling menu */
+.pl-tag-pick-wrap { position: relative; display: flex; flex: 1 1 auto; min-width: 0; }
+.pl-tag-pick-wrap > input { width: 100%; padding-right: 26px; }
+.pl-tag-pick-btn {
+    position: absolute;
+    right: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--pl-text);
+    opacity: 0.5;
+    font-size: 0.75em;
+    cursor: pointer;
+}
+.pl-tag-pick-btn:hover, .pl-tag-pick-btn:focus-visible { opacity: 1; outline: none; }
+/* long menus (many tags / incarnations) scroll instead of running off screen */
+.pl-ctx-menu.pl-root { max-height: min(240px, 60vh); overflow-y: auto; }

@@ -18,6 +18,7 @@ export const CHANGELOG = [
     {
         version: '1.10.2',
         changed: [
+            "Tags are now reusable across your whole library. A tiny caret inside the Tag field (when creating an incarnation, and in \u201cEdit tags…\u201d) opens a small floating menu of every tag you\u2019ve used on any persona, most-used first, plus \u201cOriginal\u201d; typing narrows it. It floats and scrolls, so nothing in the window grows however many tags you collect.",
             "Incarnation tags: every incarnation can now carry an optional tag, shown after its name like \u201cSteve (Fighter)\u201d \u2014 the same way the original used to be marked. Set one when creating an incarnation, or edit any of them (the original included) from \u201cEdit tags\u2026\u201d in the incarnation dropdown. The automatic \u201c(original)\u201d label is gone: a persona\u2019s original is now just \u201cSteve\u201d unless you tag it yourself (try \u201cOriginal\u201d). Tags are display-only and never become part of the persona\u2019s name.",
             "New incarnations can be copied from another persona. A third option in the New incarnation window, \u201cCopy from another persona\u201d, offers a searchable list of your whole library (plus a picker for that persona\u2019s own incarnations, if it has any) \u2014 handy for folding separate \u201cSteve (Fighter)\u201d / \u201cSteve (Ranger)\u201d personas into one persona\u2019s incarnations. It\u2019s a one-time copy and the persona you copy from is never changed.",
             "Section category templates: the character-sheet categories are no longer fixed. A small bookmark on each category section saves its title and field labels as a template (or updates the template of the same name, built-ins included), and it appears in the category dropdown for every persona. A small \u22ef beside the dropdown lets you hide any template (built-in or yours), reset an edited built-in, or delete your own. Only the structure is saved, never the text typed into the fields.",
@@ -26,6 +27,7 @@ export const CHANGELOG = [
             "The incarnation arrow is now a slim caret attached to the right of the \u201cUse this persona\u201d check (before the lock dropdown) instead of a square button of its own.",
         ],
         fixed: [
+            "The editor, Compare, image viewer and dialog windows no longer stay glued to the top of the Persona drawer. With a long persona list you no longer have to scroll back up to find them \u2014 they now cover the screen where you are, on desktop and mobile.",
             "The Compare picker\u2019s search box no longer stretches tall.",
             "Menus (such as the category templates list) opening far from their button, or cut off, when SillyTavern\u2019s drawer traps fixed-position elements \u2014 they now place themselves relative to where they actually are.",
             "Spell check now works in the expanded text editor and in the core description and section text boxes (it had been switched off).",

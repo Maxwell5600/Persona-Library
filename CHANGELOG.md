@@ -12,6 +12,7 @@ the other.
 ## v1.10.2
 
 ### Changed
+- Tags are now reusable across your whole library. A tiny caret inside the Tag field (when creating an incarnation, and in “Edit tags…”) opens a small floating menu of every tag you've used on any persona, most-used first, plus “Original”; typing narrows it. It floats and scrolls, so nothing in the window grows however many tags you collect.
 - Incarnation tags: every incarnation can now carry an optional tag, shown after its name like “Steve (Fighter)” — the same way the original used to be marked. Set one when creating an incarnation, or edit any of them (the original included) from “Edit tags…” in the incarnation dropdown. The automatic “(original)” label is gone: a persona’s original is now just “Steve” unless you tag it yourself (try “Original”). Tags are display-only and never become part of the persona’s name.
 - New incarnations can be copied from another persona. A third option in the New incarnation window, “Copy from another persona”, offers a searchable list of your whole library (plus a picker for that persona’s own incarnations, if it has any) — handy for folding separate “Steve (Fighter)” / “Steve (Ranger)” personas into one persona’s incarnations. It’s a one-time copy and the persona you copy from is never changed.
 - Section category templates: the character-sheet categories are no longer fixed. A small bookmark on each category section saves its title and field labels as a template (or updates the template of the same name, built-ins included), and it appears in the "Ready-made character-sheet category" dropdown for every persona. A small ⋯ beside the dropdown lets you hide any template (built-in or yours), reset an edited built-in, or delete your own. Only the structure is saved, never the text typed into the fields.
@@ -20,6 +21,7 @@ the other.
 - The incarnation arrow is now a slim caret attached to the right of the "Use this persona" check (before the lock dropdown) instead of a square button of its own.
 
 ### Fixed
+- The editor, Compare, image viewer and dialog windows no longer stay glued to the top of the Persona drawer. With a long persona list you no longer have to scroll back up to find them — they now cover the screen where you are, on desktop and mobile.
 - The Compare picker’s search box no longer stretches tall.
 - Menus (such as the category templates list) opening far from their button, or cut off, when SillyTavern's drawer traps fixed-position elements — they now place themselves relative to where they actually are.
 - Spell check now works in the expanded text editor and in the core description and section text boxes (it had been switched off).

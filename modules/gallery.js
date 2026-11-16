@@ -46,6 +46,7 @@ import { diffText } from './text-diff.js';
 import { createImageViewer } from './image-viewer.js';
 import { createContextMenu, personaMenuItems, incarnationLabel } from './persona-menu.js';
 import { onLibraryChanged, emitLibraryChanged } from './library-bridge.js';
+import { watchFixedOverlays } from './fixed-trap.js';
 
 const POSITIONS = [
     ['', 'Default (In Prompt)'],
@@ -911,24 +912,57 @@ export function createPersonaLibrary(container, adapter, options = {}) {
         if (!adapter.getPersonaIncarnations?.(id)) openIncarnationDialog(id);
     }
 
-    /** Suggestions for the tag inputs: "Original" (the optional tag for an original) plus any tag already used on this persona. */
-    function tagSuggestions(info) {
-        const used = (info?.list ?? []).map((i) => i.tag).filter(Boolean);
-        return [...new Set(['Original', ...used])];
+    /**
+     * Tags already used anywhere in the library (every persona's incarnations),
+     * most-used first, plus "Original". Reusing a tag on another persona is one
+     * click instead of retyping it.
+     */
+    function tagSuggestions() {
+        const counts = new Map();
+        for (const p of adapter.getPersonas() ?? []) {
+            for (const inc of adapter.getPersonaIncarnations?.(p.id)?.list ?? []) {
+                const t = (inc.tag ?? '').trim();
+                if (t) counts.set(t, (counts.get(t) ?? 0) + 1);
+            }
+        }
+        const ranked = [...counts.entries()].sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).map(([t]) => t);
+        return ranked.some((t) => t.toLowerCase() === 'original') ? ranked : [...ranked, 'Original'];
     }
-    const tagDatalist = (idSuffix, info) => el('datalist', { id: `pl-tag-suggest-${idSuffix}` }, tagSuggestions(info).map((t) => el('option', { value: t })));
+
+    /**
+     * Wraps a tag input with a tiny caret at its right edge. The caret opens a
+     * small floating menu of tags already used in the library (most-used first,
+     * narrowed by what's typed). It floats and scrolls, so the dialog never
+     * grows however many tags pile up. Returns the wrapper to place in the form.
+     */
+    function withTagPicker(input) {
+        const btn = el('button', { class: 'pl-tag-pick-btn', type: 'button', title: 'Use an existing tag', 'aria-label': 'Use an existing tag' },
+            [el('i', { class: 'fa-solid fa-chevron-down' })]);
+        btn.onclick = (e) => {
+            e.preventDefault();
+            const typed = (input.value ?? '').trim().toLowerCase();
+            const all = tagSuggestions();
+            const narrowed = typed ? all.filter((t) => t.toLowerCase().includes(typed) && t.toLowerCase() !== typed) : all;
+            const list = narrowed.length ? narrowed : all;
+            const r = btn.getBoundingClientRect();
+            ctxMenu.open({
+                x: r.right - 140, y: r.bottom + 2, anchorRect: r,
+                items: list.map((t) => ({ icon: 'fa-tag', label: t, onClick: () => { input.value = t; input.dispatchEvent(new Event('input', { bubbles: true })); input.focus(); } })),
+            });
+        };
+        return el('div', { class: 'pl-tag-pick-wrap' }, [input, btn]);
+    }
 
     /** Small editor: one tag field per incarnation, original included. Empty = no tag. */
     async function openIncarnationTagsDialog(id) {
         const info = adapter.getPersonaIncarnations?.(id) ?? null;
         if (!info?.list?.length || !adapter.setPersonaIncarnationTag) return;
-        const listId = `tags-${Math.random().toString(36).slice(2, 7)}`;
         const rows = info.list.map((inc) => {
             const input = el('input', {
                 type: 'text', class: 'pl-name-input pl-tag-input', value: inc.tag ?? '', maxlength: '40',
-                placeholder: 'no tag', list: `pl-tag-suggest-${listId}`,
+                placeholder: 'no tag',
             });
-            return { inc, input, row: el('div', { class: 'pl-tag-row' }, [el('span', { class: 'pl-tag-name', text: inc.name + (inc.active ? '  · active' : '') }), input]) };
+            return { inc, input, row: el('div', { class: 'pl-tag-row' }, [el('span', { class: 'pl-tag-name', text: inc.name + (inc.active ? '  · active' : '') }), withTagPicker(input)]) };
         });
         const saveBtn = el('button', { class: 'pl-btn pl-primary', type: 'button', text: 'Save tags' });
         saveBtn.onclick = async () => {
@@ -950,7 +984,6 @@ export function createPersonaLibrary(container, adapter, options = {}) {
             el('div', { class: 'pl-dialog-body' }, [
                 el('div', { class: 'pl-sections-hint', text: 'A tag shows after the name, like “Steve (Fighter)”. Optional for every incarnation — including the original, which has none until you give it one (try “Original”).' }),
                 ...rows.map((r) => r.row),
-                tagDatalist(listId, info),
             ]),
             el('div', { class: 'pl-dialog-actions' }, [el('button', { class: 'pl-btn', type: 'button', text: 'Cancel', onclick: () => closeDialog() }), saveBtn]),
         ]));
@@ -964,10 +997,9 @@ export function createPersonaLibrary(container, adapter, options = {}) {
         if (!await confirmDiscardIfDirty(id)) return;
         const info = adapter.getPersonaIncarnations?.(id) ?? null;
         const others = sortPersonas((adapter.getPersonas() ?? []).filter((x) => x.id !== id), 'name');
-        const listId = `new-${Math.random().toString(36).slice(2, 7)}`;
 
         const nameInput = el('input', { type: 'text', class: 'pl-name-input', placeholder: `e.g. ${p.name} Z`, maxlength: '120' });
-        const tagInput = el('input', { type: 'text', class: 'pl-name-input', placeholder: 'optional, e.g. Fighter', maxlength: '40', list: `pl-tag-suggest-${listId}` });
+        const tagInput = el('input', { type: 'text', class: 'pl-name-input', placeholder: 'optional, e.g. Fighter', maxlength: '40' });
         let nameTouched = false;
         nameInput.addEventListener('input', () => { nameTouched = true; });
 
@@ -1065,7 +1097,7 @@ export function createPersonaLibrary(container, adapter, options = {}) {
             el('div', { class: 'pl-dialog-title', text: `New incarnation of “${info?.list?.find((x) => x.isOriginal)?.name ?? p.name}”` }),
             el('div', { class: 'pl-dialog-body' }, [
                 el('div', { class: 'pl-field' }, [el('label', { text: 'Name' }), nameInput]),
-                adapter.setPersonaIncarnationTag && el('div', { class: 'pl-field' }, [el('label', { text: 'Tag (optional)' }), tagInput, tagDatalist(listId, info)]),
+                adapter.setPersonaIncarnationTag && el('div', { class: 'pl-field' }, [el('label', { text: 'Tag (optional)' }), withTagPicker(tagInput)]),
                 el('label', { class: 'pl-dialog-check' }, [modeBlank, el('span', { text: 'Start with a blank slate' })]),
                 el('label', { class: 'pl-dialog-check' }, [modeCopy, el('span', { text: 'Copy from an existing incarnation' })]),
                 modeOther && el('label', { class: 'pl-dialog-check' }, [modeOther, el('span', { text: 'Copy from another persona' })]),
@@ -3004,6 +3036,10 @@ export function createPersonaLibrary(container, adapter, options = {}) {
         note = '';
     }
 
+    // Keeps the windows pinned to the screen even when SillyTavern's scrolling,
+    // blurred drawer would otherwise trap them (see fixed-trap.js). Not needed
+    // for the chat-bar overlay, which is mounted directly on <body>.
+    const fixedWatch = overlayMode ? null : watchFixedOverlays(container);
     const unsubscribe = adapter.subscribe?.(refresh);
     // The other instance (gallery <-> chat-bar overlay) changed something:
     // force a redraw so favorites, names, locks, incarnations never go stale.
@@ -3033,6 +3069,7 @@ export function createPersonaLibrary(container, adapter, options = {}) {
         destroy() {
             try { unsubscribe?.(); } catch { /* ignore */ }
             try { unsubscribeChanges?.(); } catch { /* ignore */ }
+            try { fixedWatch?.destroy(); } catch { /* ignore */ }
             document.removeEventListener('keydown', onGalleryKeydown);
             document.removeEventListener('keydown', onDialogKey, true);
             closeMenu();
