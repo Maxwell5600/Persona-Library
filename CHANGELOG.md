@@ -21,7 +21,7 @@ the other.
 - The incarnation arrow is now a slim caret attached to the right of the "Use this persona" check (before the lock dropdown) instead of a square button of its own.
 
 ### Fixed
-- The editor, Compare, image viewer and dialog windows no longer stay glued to the top of the Persona drawer. With a long persona list you no longer have to scroll back up to find them — they now cover the screen where you are, on desktop and mobile.
+- The editor, Compare, image viewer and dialog windows no longer stay glued to the top of the Persona drawer. With a long persona list you no longer have to scroll back up to find them — they now stay put on screen, on desktop and mobile, and cover exactly the area the Persona drawer covers — so they no longer slide underneath bars stacked above it, such as the Probably Too Many Tabs (PTMT) tab bar.
 - The Compare picker’s search box no longer stretches tall.
 - Menus (such as the category templates list) opening far from their button, or cut off, when SillyTavern's drawer traps fixed-position elements — they now place themselves relative to where they actually are.
 - Spell check now works in the expanded text editor and in the core description and section text boxes (it had been switched off).

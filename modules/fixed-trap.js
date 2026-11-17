@@ -23,6 +23,14 @@
  * and filters are purely cosmetic behind the dark scrim; a transform is only
  * dropped when it's an identity transform that does nothing but create the
  * trap, never one that actually positions something).
+ *
+ * Releasing the trap alone would make the windows cover the WHOLE screen —
+ * including anything that sits above the drawer, such as the tab bar added by
+ * "Probably Too Many Tabs" (PTMT), which would then draw on top of them. So
+ * the windows keep covering exactly the area the trapping drawer covers on
+ * screen (its box clipped to the viewport), the same area they filled before,
+ * just measured live so scrolling the drawer can't move them. The edges are
+ * handed to the CSS as --pl-fx-top/right/bottom/left on the container.
  */
 
 /** Selector matching any overlay of ours that is currently shown. */
@@ -67,11 +75,30 @@ export function watchFixedOverlays(container) {
     let saved = [];
     let applied = false;
 
+    let trapper = null;
+    const FX = ['top', 'right', 'bottom', 'left'];
+
+    /** Cover what the trapping drawer covers on screen (clipped to the viewport). */
+    function placeEdges() {
+        if (!trapper) return;
+        const r = trapper.getBoundingClientRect();
+        const w = document.documentElement.clientWidth || window.innerWidth;
+        const h = document.documentElement.clientHeight || window.innerHeight;
+        const edges = {
+            top: Math.max(0, r.top), left: Math.max(0, r.left),
+            right: Math.max(0, w - r.right), bottom: Math.max(0, h - r.bottom),
+        };
+        for (const k of FX) container.style.setProperty(`--pl-fx-${k}`, `${Math.round(edges[k])}px`);
+    }
+
     function apply() {
         if (applied) return;
         applied = true;
+        trapper = null;
         for (let el = container.parentElement; el && el !== document.documentElement; el = el.parentElement) {
-            for (const [prop, value] of overridesFor(el)) {
+            const ov = overridesFor(el);
+            if (ov.length && !trapper) { trapper = el; placeEdges(); }
+            for (const [prop, value] of ov) {
                 saved.push({ el, prop, value: el.style.getPropertyValue(prop), priority: el.style.getPropertyPriority(prop) });
                 el.style.setProperty(prop, value, 'important');
             }
@@ -85,6 +112,8 @@ export function watchFixedOverlays(container) {
             if (value) el.style.setProperty(prop, value, priority); else el.style.removeProperty(prop);
         }
         saved = [];
+        trapper = null;
+        for (const k of FX) container.style.removeProperty(`--pl-fx-${k}`);
     }
 
     const sync = () => { if (container.querySelector(OPEN_OVERLAY)) apply(); else restore(); };
@@ -93,10 +122,12 @@ export function watchFixedOverlays(container) {
     const observer = new MutationObserver(sync);
     observer.observe(container, { subtree: true, childList: true, attributes: true, attributeFilter: ['hidden'] });
     sync();
+    window.addEventListener('resize', placeEdges);
 
     return {
         destroy() {
             observer.disconnect();
+            window.removeEventListener('resize', placeEdges);
             restore();
         },
     };

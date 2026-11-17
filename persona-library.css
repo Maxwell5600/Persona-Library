@@ -2810,3 +2810,17 @@ body.pl-active #PersonaManagement {
 .pl-tag-pick-btn:hover, .pl-tag-pick-btn:focus-visible { opacity: 1; outline: none; }
 /* long menus (many tags / incarnations) scroll instead of running off screen */
 .pl-ctx-menu.pl-root { max-height: min(240px, 60vh); overflow-y: auto; }
+
+/* While SillyTavern's drawer would trap our windows (see modules/fixed-trap.js),
+   they cover exactly the drawer's on-screen area rather than the whole screen,
+   so anything stacked above the drawer (e.g. PTMT's tab bar) is never covered
+   by — or covering — them. The variables only exist while that applies. */
+.pl-detail.pl-detail,
+.pl-text-focus-overlay.pl-text-focus-overlay,
+.pl-dialog.pl-dialog,
+.pl-compare.pl-compare,
+.pl-lightbox.pl-lightbox {
+    inset: var(--pl-fx-top, 0) var(--pl-fx-right, 0) var(--pl-fx-bottom, 0) var(--pl-fx-left, 0);
+    width: auto;  /* .pl-root's width/height:100% would otherwise override the insets */
+    height: auto;
+}
