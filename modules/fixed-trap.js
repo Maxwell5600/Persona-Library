@@ -28,9 +28,9 @@
  * including anything that sits above the drawer, such as the tab bar added by
  * "Probably Too Many Tabs" (PTMT), which would then draw on top of them. So
  * the windows keep covering exactly the area the trapping drawer covers on
- * screen (its box clipped to the viewport), the same area they filled before,
- * just measured live so scrolling the drawer can't move them. The edges are
- * handed to the CSS as --pl-fx-top/right/bottom/left on the container.
+ * screen (its box clipped to the viewport), measured live so scrolling the
+ * drawer can't move them. The edges are handed to the CSS as
+ * --pl-fx-top/right/bottom/left on the container.
  */
 
 /** Selector matching any overlay of ours that is currently shown. */
