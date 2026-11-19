@@ -7,7 +7,7 @@
 import { createPersonaLibrary } from './modules/gallery.js';
 import { stAdapter, ctx, registerVariantGenerationHook, registerPersonaUsageTracking, registerImageBindingHook } from './modules/st-adapter.js';
 import { setLibrary, setOverlayFactory, destroyOverlayLibrary } from './modules/library-bridge.js';
-import { mountSettingsPanel } from './modules/settings-panel.js';
+import { mountSettingsPanel, showExtraFeaturesNoticeOnce } from './modules/settings-panel.js';
 import { mountQuickSwitcher, unmountQuickSwitcher } from './modules/quick-switcher.js';
 
 const HOST_ID = 'persona-library-host';
@@ -108,7 +108,9 @@ function unmount() {
 
 function watch() {
     if (observer) return;
-    observer = new MutationObserver(() => {
+    let tickTimer = null;
+    const tick = () => {
+        tickTimer = null;
         // Never refresh in response to DOM mutations. Gallery rendering itself
         // mutates this subtree, so doing so creates an endless redraw loop.
         mountSettingsPanel(); // idempotent (bails via getElementById) — cheap to retry
@@ -126,6 +128,13 @@ function watch() {
             mountQueued = false;
             mount();
         }, 0);
+    };
+    // SillyTavern mutates the DOM constantly (every streamed chat token), and
+    // this observer sees the whole body. The re-attach checks above are
+    // idempotent and nothing needs them within a few milliseconds, so run them
+    // at most once per 250 ms burst instead of once per mutation batch.
+    observer = new MutationObserver(() => {
+        if (tickTimer === null) tickTimer = setTimeout(tick, 250);
     });
     // Watch the stable document body so a drawer replaced or moved by PTMT can
     // be mounted again. Existing hosts need no work when merely reparented.
@@ -149,6 +158,7 @@ async function boot() {
     watch();
     mountSettingsPanel();
     mountQuickSwitcher(stAdapter);
+    showExtraFeaturesNoticeOnce();
     if (!unregisterVariantHook) {
         try { unregisterVariantHook = registerVariantGenerationHook(); } catch (e) { console.error('[PersonaLibrary] could not register variant generation hook', e); }
     }
@@ -158,7 +168,12 @@ async function boot() {
     if (!unregisterImageBindings) {
         try { unregisterImageBindings = registerImageBindingHook(); } catch (e) { console.error('[PersonaLibrary] could not register image binding hook', e); }
     }
-    window.addEventListener('resize', () => instance?.refresh(), { passive: true });
+    // One refresh per frame while a window is being dragged, not one per event.
+    let resizeFrame = 0;
+    window.addEventListener('resize', () => {
+        if (resizeFrame) return;
+        resizeFrame = requestAnimationFrame(() => { resizeFrame = 0; instance?.refresh(); });
+    }, { passive: true });
 }
 
 function safeBoot() {

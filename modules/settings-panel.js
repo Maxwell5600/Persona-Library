@@ -10,6 +10,7 @@
 import { getSettings, saveSettings, stAdapter } from './st-adapter.js';
 import { CHANGELOG } from './changelog.js';
 import { mountQuickSwitcher, unmountQuickSwitcher } from './quick-switcher.js';
+import { getLibrary } from './library-bridge.js';
 
 const PANEL_ID = 'persona-library-settings-panel';
 
@@ -74,6 +75,22 @@ export function mountSettingsPanel() {
                     </small>
                 </span>
             </label>
+            <label class="checkbox_label" for="pl-folders-enabled" style="align-items:flex-start; gap:8px; margin-top:10px;">
+                <input id="pl-folders-enabled" type="checkbox" />
+                <span>
+                    <b>Folders</b>
+                    <br/>
+                    <small>
+                        Adds a folder button next to the favorites filter in the Persona gallery, so you can
+                        group personas (say, everyone from one universe) into folders. Each folder has a name,
+                        a short synopsis, a description and a thumbnail, opens as its own gallery of just those
+                        personas, and can be sorted by hand by dragging. A persona can be in as many folders as
+                        you like, and folders only point at personas &mdash; removing one never deletes it.
+                        <b>Off by default.</b> Turning it off just hides the feature; your folders are kept and
+                        come back when you turn it on again.
+                    </small>
+                </span>
+            </label>
         </div>`;
 
     const checkbox = drawer.querySelector('#pl-reliable-character-bindings');
@@ -90,10 +107,41 @@ export function mountSettingsPanel() {
         else unmountQuickSwitcher();
     });
 
+    const foldersCheckbox = drawer.querySelector('#pl-folders-enabled');
+    foldersCheckbox.checked = !!settings.foldersEnabled;
+    foldersCheckbox.addEventListener('change', () => {
+        saveSettings({ foldersEnabled: foldersCheckbox.checked });
+        try { getLibrary()?.applySettings?.(); } catch { /* the gallery picks it up on its next redraw */ }
+    });
+
     drawer.querySelector('.inline-drawer-content').appendChild(buildChangelogSection(settings));
 
     host.appendChild(drawer);
     return true;
+}
+
+/**
+ * One-time heads-up, on the first load after installing or updating: the
+ * optional extras are OFF by default and live in the Extensions-tab settings.
+ * Marked as seen the moment it's shown, so it never repeats.
+ */
+export function showExtraFeaturesNoticeOnce() {
+    if (getSettings().extraFeaturesNoticeSeen) return;
+    saveSettings({ extraFeaturesNoticeSeen: true });
+    const msg = 'Persona Library has some optional extras that are off by default. Turn them on in Extensions \u2192 Persona Library:\n'
+        + '\u2022 Quick persona switcher \u2014 swap personas from the chat bar.\n'
+        + '\u2022 Folders \u2014 group personas into folders you can arrange by hand.';
+    setTimeout(() => {
+        try {
+            const c = globalThis.SillyTavern?.getContext?.();
+            const html = `<h3 style="margin:0 0 6px">Extra features in the extension settings</h3>`
+                + `<p style="margin:0 0 8px">Persona Library has optional extras that are <b>off by default</b>. Turn them on under <b>Extensions \u2192 Persona Library</b>:</p>`
+                + `<ul style="text-align:left; margin:0; padding-left:20px"><li><b>Quick persona switcher</b> \u2014 swap personas from the chat bar.</li>`
+                + `<li><b>Folders</b> \u2014 group personas into folders you can arrange by hand.</li></ul>`;
+            if (typeof c?.callGenericPopup === 'function' && c?.POPUP_TYPE?.TEXT !== undefined) c.callGenericPopup(html, c.POPUP_TYPE.TEXT);
+            else if (globalThis.toastr?.info) globalThis.toastr.info(msg, 'Persona Library', { timeOut: 15000 });
+        } catch (e) { console.warn('[PersonaLibrary] could not show the extra-features notice', e); }
+    }, 2500);
 }
 
 function escapeHtml(s) {

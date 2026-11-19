@@ -25,6 +25,7 @@ const VARIANTS_KEY = 'personaLibraryVariants';
 const GALLERY_KEY = 'personaLibraryGallery';
 const MODIFIED_KEY = 'personaLibraryModified';
 const INCARNATIONS_KEY = 'personaLibraryIncarnations';
+const FOLDERS_KEY = 'personaLibraryFolders';
 const MAIN_INC = 'main'; // key of every persona's original incarnation
 const CHAR_BINDING_FIELD = 'personaLibraryBindingId';
 const CHAT_BINDING_KEY = 'personaLibraryBindingId';
@@ -40,6 +41,13 @@ const DEFAULTS = {
     // key from `sort` above (the main gallery's sort) so picking a different
     // order in one doesn't silently change the other.
     quickSwitcherSort: 'name',
+    // Folders (see the "Folders" section in this file and gallery.js): groups
+    // of personas with their own gallery view. Off by default, like the Quick
+    // Switcher — an opt-in extra, turned on in the Extensions-tab settings.
+    foldersEnabled: false,
+    // Set once the one-time "extra features are in the settings" notice has
+    // been shown (see index.js), so it never nags again.
+    extraFeaturesNoticeSeen: false,
     // Gallery view state, remembered between sessions (see gallery.js).
     // `favorites` is a list of persona ids; `favoritesOnly` is the optional
     // "show only favorites" filter; `detailTab` is the last-used tab of the
@@ -732,6 +740,8 @@ export function getPersonas() {
     const personas = pu.personas ?? {};
     const descs = pu.persona_descriptions ?? {};
     const store = sectionsStore();
+    const modified = modifiedStore();
+    const incs = incStore();
     return Object.entries(personas).map(([id, name], index) => {
         const d = descs[id] ?? {};
         return {
@@ -750,13 +760,13 @@ export function getPersonas() {
                 : [],
             created: d.date_added ?? index,
             lastUsed: d.date_last_used ?? d.date_added ?? index,
-            modified: modifiedStore()[id] ?? d.date_added ?? index,
+            modified: modified[id] ?? d.date_added ?? index,
             // Incarnations (see the section above duplicatePersona). Only the
             // LIVE incarnation is ever a persona entry; these just let the
             // gallery / Quick Switcher show a badge and name the original.
-            incarnationCount: incStore()[id]?.slots?.length ?? 1,
-            incarnationKey: incStore()[id]?.activeKey ?? null,
-            incarnationOriginalName: incStore()[id] ? (getPersonaIncarnations(id)?.list?.find((x) => x.isOriginal)?.name ?? null) : null,
+            incarnationCount: incs[id]?.slots?.length ?? 1,
+            incarnationKey: incs[id]?.activeKey ?? null,
+            incarnationOriginalName: incs[id] ? (getPersonaIncarnations(id)?.list?.find((x) => x.isOriginal)?.name ?? null) : null,
         };
     });
 }
@@ -1772,6 +1782,130 @@ export async function duplicatePersona(id) {
     refreshNativePersonaList(savedName);
 }
 
+/*
+ * Folders: user-made groups of personas (e.g. "everyone from one universe"),
+ * with a name, a short synopsis, a longer description and an optional
+ * thumbnail. A folder only REFERENCES personas by id — nothing about a
+ * persona changes, a persona can be in any number of folders, and removing
+ * one from a folder (or deleting the folder) never touches the persona.
+ *
+ *   extensionSettings[FOLDERS_KEY] = { list: [{ id, name, synopsis,
+ *     description, thumb: {path}|null, members: [personaId] }] }
+ *
+ * Members that no longer exist as personas are filtered out on read, so a
+ * persona deleted anywhere (even outside this extension) just disappears
+ * from its folders without any cleanup pass.
+ */
+const FOLDER_THUMB_DIR = 'pl-folder-thumbnails';
+const clampText = (v, max) => String(v ?? '').slice(0, max);
+
+function folderStore() {
+    const c = ctx();
+    if (!c?.extensionSettings) return { list: [] };
+    const cur = c.extensionSettings[FOLDERS_KEY];
+    if (!cur || !Array.isArray(cur.list)) c.extensionSettings[FOLDERS_KEY] = { list: [] };
+    return c.extensionSettings[FOLDERS_KEY];
+}
+
+function folderView(f, valid) {
+    return {
+        id: f.id,
+        name: f.name,
+        synopsis: f.synopsis ?? '',
+        description: f.description ?? '',
+        thumb: f.thumb?.path ? galleryUrl(f.thumb.path) : null,
+        manual: !!f.manual, // true = members are shown in the order the person dragged them into
+        members: (f.members ?? []).filter((id) => valid.has(id)),
+    };
+}
+
+export function getFolders() {
+    const valid = new Set(Object.keys(powerUser().personas ?? {}));
+    return folderStore().list.map((f) => folderView(f, valid));
+}
+
+/** Creates (no id) or updates a folder's text. Returns the folder id. */
+export function saveFolder({ id, name, synopsis, description }) {
+    const store = folderStore();
+    let f = id ? store.list.find((x) => x.id === id) : null;
+    if (!f) {
+        f = { id: `fld-${galleryUid().replace(/[^a-z0-9]/gi, '').slice(0, 10)}`, name: '', synopsis: '', description: '', thumb: null, members: [] };
+        store.list.push(f);
+    }
+    f.name = clampText(name, 80).trim() || 'Untitled folder';
+    f.synopsis = clampText(synopsis, 280).trim();
+    f.description = clampText(description, 8000);
+    ctx()?.saveSettingsDebounced?.();
+    return f.id;
+}
+
+export async function deleteFolder(id) {
+    const store = folderStore();
+    const f = store.list.find((x) => x.id === id);
+    if (!f) return;
+    store.list = store.list.filter((x) => x !== f);
+    ctx()?.saveSettingsDebounced?.();
+    if (f.thumb?.path) await galleryDeletePath(f.thumb.path);
+}
+
+/** Replaces the folder's thumbnail with an uploaded image file. */
+export async function setFolderThumbnail(id, file) {
+    const f = folderStore().list.find((x) => x.id === id);
+    if (!f) throw new Error('That folder no longer exists');
+    if (!file || !(file.type || '').startsWith('image/')) throw new Error('Pick an image file');
+    const path = await galleryUploadBlob(FOLDER_THUMB_DIR, file, file.name);
+    const old = f.thumb?.path;
+    f.thumb = { path };
+    ctx()?.saveSettingsDebounced?.();
+    if (old) await galleryDeletePath(old);
+}
+
+export async function clearFolderThumbnail(id) {
+    const f = folderStore().list.find((x) => x.id === id);
+    if (!f?.thumb?.path) return;
+    const old = f.thumb.path;
+    f.thumb = null;
+    ctx()?.saveSettingsDebounced?.();
+    await galleryDeletePath(old);
+}
+
+export function setFolderSortManual(folderId, on) {
+    const f = folderStore().list.find((x) => x.id === folderId);
+    if (!f) return;
+    f.manual = !!on;
+    ctx()?.saveSettingsDebounced?.();
+}
+
+/**
+ * Stores a manual order. `orderedIds` may be only the personas currently
+ * shown (a search or favorites filter can hide others); those fill the slots
+ * the shown ones already occupied, so hidden members keep their places.
+ */
+export function setFolderOrder(folderId, orderedIds) {
+    const f = folderStore().list.find((x) => x.id === folderId);
+    if (!f || !Array.isArray(orderedIds)) return;
+    const shown = new Set(orderedIds.filter((id) => f.members.includes(id)));
+    const queue = orderedIds.filter((id) => shown.has(id));
+    let k = 0;
+    f.members = f.members.map((m) => (shown.has(m) ? queue[k++] : m));
+    ctx()?.saveSettingsDebounced?.();
+}
+
+export function addPersonaToFolder(folderId, personaId) {
+    const f = folderStore().list.find((x) => x.id === folderId);
+    if (!f || !personaId) return;
+    if (!f.members.includes(personaId)) { f.members.push(personaId); ctx()?.saveSettingsDebounced?.(); }
+}
+
+export function removePersonaFromFolder(folderId, personaId) {
+    const f = folderStore().list.find((x) => x.id === folderId);
+    if (!f) return;
+    const n = f.members.length;
+    f.members = f.members.filter((x) => x !== personaId);
+    if (f.members.length !== n) ctx()?.saveSettingsDebounced?.();
+}
+
+
 export async function deletePersona(id) {
     const pu = powerUser();
     const name = pu.personas?.[id];
@@ -1956,6 +2090,15 @@ export const stAdapter = {
     replaceAvatar,
     duplicatePersona,
     deletePersona,
+    getFolders,
+    saveFolder,
+    deleteFolder,
+    setFolderThumbnail,
+    clearFolderThumbnail,
+    setFolderSortManual,
+    setFolderOrder,
+    addPersonaToFolder,
+    removePersonaFromFolder,
     getPersonaGalleryImages,
     ensurePersonaGallery,
     addPersonaGalleryImages,

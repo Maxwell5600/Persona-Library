@@ -139,6 +139,13 @@ export function createPersonaLibrary(container, adapter, options = {}) {
     );
 
     let selectedId = null;
+    // Folders view: foldersMode swaps the grid for folder cards; openFolderId
+    // narrows the persona grid to one folder's members. Session-only state.
+    let foldersMode = false;
+    let openFolderId = null;
+    let folderDescOpen = false; // the open folder's description, collapsed by default
+    // "Add multiple to folder" mode: { folderId, name, picked:Set } while personas are being ticked.
+    let multiAdd = null;
     let dirty = false;
     let note = '';
     // Working copy of { core, sections } for whichever persona's detail view
@@ -160,17 +167,29 @@ export function createPersonaLibrary(container, adapter, options = {}) {
     container.append(root);
 
     // -- toolbar (built once, kept alive so the search box never loses focus) --
+    let searchTimer = null;
     const search = el('input', {
         class: 'pl-search',
         type: 'search',
         placeholder: 'Search personas\u2026',
         value: settings.query,
-        oninput: () => { persist({ query: search.value }); renderGrid(); },
+        // The query is saved straight away; the grid (hundreds of tiles for a big
+        // library) is rebuilt once typing pauses, not on every keystroke.
+        oninput: () => { persist({ query: search.value }); clearTimeout(searchTimer); searchTimer = setTimeout(renderGrid, 120); },
     });
 
     const sort = el('select', {
         class: 'pl-select',
-        onchange: () => { persist({ sort: sort.value }); renderGrid(); },
+        onchange: () => {
+            // Inside a folder, \u201cManual order\u201d is that folder's own setting, not the global sort.
+            if (openFolderId && adapter.setFolderSortManual) {
+                const manual = sort.value === 'manual';
+                adapter.setFolderSortManual(openFolderId, manual);
+                if (manual) { renderGrid(); return; }
+            }
+            persist({ sort: sort.value });
+            renderGrid();
+        },
     }, [
         el('option', { value: 'name', text: 'Name (A\u2013Z)' }),
         el('option', { value: 'name-desc', text: 'Name (Z\u2013A)' }),
@@ -181,6 +200,7 @@ export function createPersonaLibrary(container, adapter, options = {}) {
         el('option', { value: 'tokens-asc', text: 'Token count (lowest first)' }),
         el('option', { value: 'favorites', text: 'Favorites first' }),
     ]);
+    const manualOpt = el('option', { value: 'manual', text: 'Manual order (drag to arrange)' });
     sort.value = settings.sort;
     if (sort.value !== settings.sort) { sort.value = 'name'; settings.sort = 'name'; } // unknown/legacy saved value
 
@@ -191,6 +211,20 @@ export function createPersonaLibrary(container, adapter, options = {}) {
         title: 'Show favorites only',
         onclick: () => { persist({ favoritesOnly: !settings.favoritesOnly }); renderGrid(); },
     }, [el('i', { class: 'fa-solid fa-star' })]);
+
+    // Next to the favorites filter: switches the grid between all personas and
+    // user-made folders of personas.
+    const foldersOn = () => !overlayMode && !!adapter.getFolders && !!adapter.getSettings?.().foldersEnabled;
+    const foldersBtn = !overlayMode && adapter.getFolders && el('button', {
+        hidden: true,
+        class: 'pl-icon-btn pl-folders-btn', type: 'button', title: 'Folders', 'aria-pressed': 'false',
+        onclick: () => {
+            if (multiAdd) endMultiAdd();
+            foldersMode = !foldersMode;
+            openFolderId = null;
+            renderGrid();
+        },
+    }, [el('i', { class: 'fa-solid fa-folder' })]);
 
     const size = el('input', {
         class: 'pl-size',
@@ -221,12 +255,45 @@ export function createPersonaLibrary(container, adapter, options = {}) {
     // Inspect, and send me its id/class so this can be corrected to the
     // exact selector for your build \u2014 same approach that nailed down the
     // GENERATION_STARTED/etc event names earlier.
-    function clickThrough(candidates, label) {
+    /** A real-looking press (pointer + mouse + click), for UIs that listen for more than "click". */
+    function press(node) {
+        const o = { bubbles: true, cancelable: true, view: window, button: 0 };
+        for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+            const Ctor = type.startsWith('pointer') && typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+            node.dispatchEvent(new Ctor(type, o));
+        }
+    }
+
+    /**
+     * Tab-bar replacements (PTMT and friends) hide SillyTavern's own top icons
+     * and draw their own labelled tabs, so clicking the hidden native icon does
+     * nothing visible. Find the visible tab by its label instead.
+     */
+    function findVisibleTab(labelRe) {
+        const out = [];
+        for (const n of document.querySelectorAll('body *')) {
+            if (root.contains(n) || n.children.length > 3) continue;
+            const text = (n.textContent ?? '').trim();
+            if (!text || text.length > 30 || !labelRe.test(text)) continue;
+            const r = n.getBoundingClientRect();
+            if (!r.width || !r.height || r.top > 120 || r.bottom < 0) continue; // tabs sit along the top
+            out.push({ n, r });
+        }
+        // Innermost match first (the label itself), then let the press bubble up to the tab.
+        out.sort((x, y) => (x.r.width * x.r.height) - (y.r.width * y.r.height));
+        return out[0]?.n ?? null;
+    }
+
+    function clickThrough(candidates, label, labelRe) {
+        // 1. A visible tab with this label (PTMT etc.) is what the person actually sees.
+        const tab = labelRe ? findVisibleTab(labelRe) : null;
+        if (tab) { press(tab); return true; }
+        // 2. Otherwise SillyTavern's own icon.
         for (const sel of candidates) {
             const target = document.querySelector(sel);
             if (target) {
                 console.log(`[PersonaLibrary] passthrough "${label}": found via selector "${sel}", clicking`, target);
-                target.click();
+                press(target);
                 return true;
             }
         }
@@ -244,7 +311,7 @@ export function createPersonaLibrary(container, adapter, options = {}) {
             '#world_info_button',
             '.drawer-icon[data-target="#WorldInfo"]',
             '#world-info-button',
-        ], 'Worlds/Lorebooks'),
+        ], 'Worlds/Lorebooks', /^(world\s*info|worlds?|lore\s*books?)$/i),
     }, [el('i', { class: 'fa-solid fa-book' })]);
 
     // -- passthrough for a single persona's native "Persona Lore" binding.
@@ -544,9 +611,20 @@ export function createPersonaLibrary(container, adapter, options = {}) {
         el('button', { class: 'pl-btn', type: 'button', text: 'Cancel', onclick: () => cancelCompare() }),
     ]);
 
+    // Shown only while "Add multiple to folder\u2026" is collecting personas.
+    const multiBarText = el('span', { class: 'pl-compare-bar-text' });
+    const multiAddBtn = el('button', { class: 'pl-btn pl-primary', type: 'button', onclick: () => finishMultiAdd() });
+    const multiBar = el('div', { class: 'pl-compare-bar pl-multi-bar', hidden: true }, [
+        multiBarText,
+        el('button', { class: 'pl-btn', type: 'button', text: 'Select all shown', onclick: () => selectAllShown() }),
+        multiAddBtn,
+        el('button', { class: 'pl-btn', type: 'button', text: 'Cancel', onclick: () => cancelMultiAdd() }),
+    ]);
+
     root.append(
-        el('div', { class: 'pl-toolbar' }, [newBtn, search, sort, favFilterBtn, size, count, loreBtn].filter(Boolean)),
+        el('div', { class: 'pl-toolbar' }, [newBtn, search, sort, favFilterBtn, foldersBtn, size, count, loreBtn].filter(Boolean)),
         compareBar,
+        multiBar,
         el('div', { class: 'pl-body' }, [gridWrap]),
     );
 
@@ -593,13 +671,20 @@ export function createPersonaLibrary(container, adapter, options = {}) {
         // cycles through everyone rather than a stale copy of the gallery's filter.
         const q = overlayMode ? '' : norm(settings.query).trim();
         const favs = favoriteSet();
+        const folder = !overlayMode && openFolderId ? adapter.getFolders?.().find((f) => f.id === openFolderId) : null;
+        const folderMembers = folder ? new Set(folder.members) : null;
         const list = all.filter((p) => {
+            if (folderMembers && !folderMembers.has(p.id)) return false;
             if (!overlayMode && settings.favoritesOnly && !favs.has(p.id)) return false;
             if (!q) return true;
             if (norm(p.name).includes(q) || norm(p.description).includes(q)) return true;
             // Searching "Steve M" should still find Steve, whichever incarnation is live.
             return !!adapter.getPersonaIncarnations?.(p.id)?.list?.some((inc) => norm(incarnationLabel(inc)).includes(q));
         });
+        if (folder?.manual) {
+            const at = new Map(folder.members.map((id, i) => [id, i]));
+            return list.sort((a, b) => at.get(a.id) - at.get(b.id));
+        }
         return sortPersonas(list, settings.sort, {
             activeId: adapter.getActiveId?.() ?? null,
             favorites: favs,
@@ -640,6 +725,397 @@ export function createPersonaLibrary(container, adapter, options = {}) {
         : null;
     gridObserver?.observe(gridWrap);
 
+    // -- manual order: drag personas around inside a folder ---------------
+    // Pointer-based (not HTML5 drag-and-drop) so it also works by touch: a
+    // mouse starts dragging after a few pixels; a finger needs a short hold,
+    // so ordinary scrolling still scrolls.
+    let drag = null;
+    let suppressClick = false;
+
+    const scrollParentOf = (node) => {
+        for (let n = node.parentElement; n && n !== document.documentElement; n = n.parentElement) {
+            const oy = getComputedStyle(n).overflowY;
+            if ((oy === 'auto' || oy === 'scroll') && n.scrollHeight > n.clientHeight) return n;
+        }
+        return document.scrollingElement;
+    };
+
+    function dragFollow() {
+        if (!drag?.active) return;
+        const { cell } = drag;
+        cell.style.transform = '';
+        const under = document.elementFromPoint(drag.px, drag.py)?.closest('.pl-tile-cell[data-pl-cell]');
+        if (under && under !== cell && under.parentNode === grid) {
+            const after = cell.compareDocumentPosition(under) & Node.DOCUMENT_POSITION_FOLLOWING;
+            grid.insertBefore(cell, after ? under.nextSibling : under);
+        }
+        const r = cell.getBoundingClientRect();
+        cell.style.transform = `translate(${Math.round(drag.px - (r.left + r.width / 2))}px, ${Math.round(drag.py - (r.top + r.height / 2))}px)`;
+    }
+
+    function dragBegin() {
+        if (!drag || drag.active) return;
+        drag.active = true;
+        drag.scroller = scrollParentOf(grid);
+        drag.cell.classList.add('pl-dragging');
+        grid.classList.add('pl-grid-dragging');
+        const tick = () => {
+            if (!drag?.active) return;
+            const box = drag.scroller === document.scrollingElement
+                ? { top: 0, bottom: window.innerHeight }
+                : drag.scroller.getBoundingClientRect();
+            if (drag.py < box.top + 50) drag.scroller.scrollTop -= 14;
+            else if (drag.py > box.bottom - 50) drag.scroller.scrollTop += 14;
+            dragFollow();
+            drag.raf = requestAnimationFrame(tick);
+        };
+        drag.raf = requestAnimationFrame(tick);
+        dragFollow();
+    }
+
+    function dragEnd(commit) {
+        const d = drag;
+        if (!d) return;
+        drag = null;
+        clearTimeout(d.timer);
+        cancelAnimationFrame(d.raf);
+        window.removeEventListener('pointermove', onDragMove, true);
+        window.removeEventListener('pointerup', onDragUp, true);
+        window.removeEventListener('pointercancel', onDragCancel, true);
+        if (!d.active) return;
+        d.cell.classList.remove('pl-dragging');
+        d.cell.style.transform = '';
+        grid.classList.remove('pl-grid-dragging');
+        suppressClick = true;
+        setTimeout(() => { suppressClick = false; }, 0);
+        if (commit && openFolderId) {
+            adapter.setFolderOrder?.(openFolderId, [...grid.querySelectorAll('.pl-tile-cell[data-pl-cell]')].map((c) => c.getAttribute('data-pl-cell')));
+        } else {
+            renderGrid(); // cancelled: put everything back
+        }
+    }
+
+    function onDragMove(e) {
+        if (!drag || e.pointerId !== drag.pointerId) return;
+        drag.px = e.clientX;
+        drag.py = e.clientY;
+        if (!drag.active) {
+            const moved = Math.hypot(e.clientX - drag.x, e.clientY - drag.y);
+            if (drag.touch) { if (moved > 8) dragEnd(false); return; } // the finger is scrolling, not dragging
+            if (moved > 6) dragBegin();
+        }
+    }
+    function onDragUp(e) { if (drag && e.pointerId === drag.pointerId) dragEnd(true); }
+    function onDragCancel(e) { if (drag && e.pointerId === drag.pointerId) dragEnd(false); }
+
+    grid.addEventListener('pointerdown', (e) => {
+        if (overlayMode || multiAdd || !grid.classList.contains('pl-grid-manual')) return;
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        if (e.target.closest('.pl-tile-star')) return;
+        const cell = e.target.closest('.pl-tile-cell[data-pl-cell]');
+        if (!cell) return;
+        const touch = e.pointerType !== 'mouse';
+        drag = { cell, x: e.clientX, y: e.clientY, px: e.clientX, py: e.clientY, pointerId: e.pointerId, active: false, touch, timer: null, raf: 0, scroller: null };
+        if (touch) drag.timer = setTimeout(dragBegin, 280);
+        window.addEventListener('pointermove', onDragMove, true);
+        window.addEventListener('pointerup', onDragUp, true);
+        window.addEventListener('pointercancel', onDragCancel, true);
+    });
+    // Once a drag is live the page must not scroll under the finger.
+    grid.addEventListener('touchmove', (e) => { if (drag?.active) e.preventDefault(); }, { passive: false });
+    // A long press must not pop the tile menu while arranging; and no stray click after a drop.
+    grid.addEventListener('contextmenu', (e) => { if (drag?.touch || (drag?.active)) { e.preventDefault(); e.stopPropagation(); } }, true);
+    grid.addEventListener('click', (e) => { if (suppressClick) { e.preventDefault(); e.stopPropagation(); } }, true);
+    grid.addEventListener('dragstart', (e) => { if (grid.classList.contains('pl-grid-manual')) e.preventDefault(); });
+
+    // -- folders --------------------------------------------------------
+    /** Puts exactly these nodes in the grid wrapper (skipping null), without needless re-parenting. */
+    function setWrap(nodes) {
+        const want = nodes.filter(Boolean);
+        const have = Array.from(gridWrap.children);
+        if (want.length === have.length && want.every((n, i) => n === have[i])) return;
+        gridWrap.replaceChildren(...want);
+    }
+
+    const foldersOf = () => adapter.getFolders?.() ?? [];
+
+    /** A folder's picture: its uploaded thumbnail, else a collage of its first few members. */
+    function folderThumbNode(f, all, cls) {
+        if (f.thumb) return el('img', { class: cls, alt: f.name, loading: 'lazy', decoding: 'async', src: f.thumb });
+        const byId = new Map(all.map((x) => [x.id, x]));
+        const pics = f.members.map((id) => byId.get(id)).filter(Boolean).slice(0, 4);
+        if (!pics.length) return el('div', { class: `${cls} pl-folder-empty` }, [el('i', { class: 'fa-solid fa-folder' })]);
+        return el('div', { class: `${cls} pl-folder-collage pl-collage-${pics.length}` },
+            pics.map((x) => personaImg({ alt: '', loading: 'lazy', decoding: 'async', src: x.image }, x.id, adapter)));
+    }
+
+    function renderFolderCards(all, scrollTop) {
+        const q = norm(settings.query).trim();
+        const folders = foldersOf().filter((f) => !q || norm(f.name).includes(q) || norm(f.synopsis).includes(q));
+        grid.replaceChildren();
+        count.textContent = `${folders.length} folder${folders.length === 1 ? '' : 's'}`;
+        for (const f of folders) {
+            const tile = el('button', {
+                class: 'pl-tile pl-folder-tile', type: 'button',
+                title: f.synopsis ? `${f.name} \u2014 ${f.synopsis}` : f.name,
+                'data-pl-folder': f.id,
+                onclick: () => { openFolderId = f.id; renderGrid(); },
+            }, [
+                folderThumbNode(f, all, 'pl-folder-thumb'),
+                el('span', { class: 'pl-tile-name' }, [f.name]),
+                el('span', { class: 'pl-tile-inc' }, [el('i', { class: 'fa-solid fa-user' }), el('span', { text: String(f.members.length) })]),
+            ]);
+            const more = el('button', {
+                class: 'pl-tile-star', type: 'button', title: 'More actions', 'aria-haspopup': 'menu',
+                onclick: (e) => { e.stopPropagation(); openFolderMenu(e, f); },
+            });
+            more.innerHTML = '<svg viewBox="0 0 14 44" width="7" height="22" aria-hidden="true" fill="currentColor"><circle cx="7" cy="7" r="3.7"/><circle cx="7" cy="22" r="3.7"/><circle cx="7" cy="37" r="3.7"/></svg>';
+            grid.append(el('div', { class: 'pl-tile-cell', oncontextmenu: (e) => openFolderMenu(e, f) }, [tile, more]));
+        }
+        if (adapter.saveFolder) {
+            grid.append(el('div', { class: 'pl-tile-cell' }, [el('button', {
+                class: 'pl-tile pl-folder-new', type: 'button', title: 'Create a folder',
+                onclick: () => openFolderEditor(null),
+            }, [el('i', { class: 'fa-solid fa-folder-plus' }), el('span', { text: 'New folder' })])]));
+        }
+        setWrap([!folders.length && !q ? el('div', { class: 'pl-empty', text: 'No folders yet \u2014 group personas (say, everyone from one universe) into a folder.' }) : null, grid]);
+        gridWrap.scrollTop = scrollTop;
+    }
+
+    function folderHeader(f, all) {
+        const desc = f.description.trim();
+        return el('div', { class: 'pl-folder-head' }, [
+            el('button', { class: 'pl-icon-btn pl-folder-head-btn', type: 'button', title: 'Back to folders', onclick: () => { openFolderId = null; renderGrid(); } },
+                [el('i', { class: 'fa-solid fa-arrow-left' })]),
+            folderThumbNode(f, all, 'pl-folder-head-thumb'),
+            el('div', { class: 'pl-folder-head-text' }, [
+                el('span', { class: 'pl-folder-head-name', text: f.name }),
+                f.synopsis ? el('span', { class: 'pl-folder-head-syn', text: f.synopsis }) : null,
+            ]),
+            desc ? el('button', {
+                class: 'pl-folder-head-more', type: 'button', title: folderDescOpen ? 'Hide description' : 'Show description',
+                onclick: () => { folderDescOpen = !folderDescOpen; renderGrid(); },
+            }, [el('i', { class: `fa-solid fa-chevron-${folderDescOpen ? 'up' : 'down'}` })]) : null,
+            el('button', { class: 'pl-icon-btn pl-folder-head-btn', type: 'button', title: 'Edit folder', onclick: () => openFolderEditor(f.id) },
+                [el('i', { class: 'fa-solid fa-pen' })]),
+            desc && folderDescOpen ? el('div', { class: 'pl-folder-head-desc', text: desc }) : null,
+        ]);
+    }
+
+    // -- "Add multiple to folder" ------------------------------------------
+    function markMultiTiles() {
+        if (!multiAdd) return;
+        const inIt = new Set(adapter.getFolders?.().find((f) => f.id === multiAdd.folderId)?.members ?? []);
+        for (const t of grid.querySelectorAll('.pl-tile[data-pl-id]')) {
+            const id = t.getAttribute('data-pl-id');
+            t.classList.toggle('pl-multi-in', inIt.has(id));
+            t.classList.toggle('pl-multi-picked', !inIt.has(id) && multiAdd.picked.has(id));
+        }
+        const n = [...multiAdd.picked].filter((id) => !inIt.has(id)).length;
+        multiBarText.textContent = `Adding to \u201c${multiAdd.name}\u201d \u2014 click personas to tick them`;
+        multiAddBtn.textContent = n ? `Add ${n} persona${n === 1 ? '' : 's'}` : 'Add';
+        multiAddBtn.disabled = !n;
+    }
+
+    function toggleMultiPick(id) {
+        if (!multiAdd) return;
+        const f = adapter.getFolders?.().find((x) => x.id === multiAdd.folderId);
+        if (f?.members.includes(id)) return; // already in this folder
+        if (multiAdd.picked.has(id)) multiAdd.picked.delete(id); else multiAdd.picked.add(id);
+        markMultiTiles();
+    }
+
+    function selectAllShown() {
+        if (!multiAdd) return;
+        for (const p of visiblePersonas()) multiAdd.picked.add(p.id);
+        markMultiTiles();
+    }
+
+    function startMultiAdd(folderId, firstId) {
+        const f = adapter.getFolders?.().find((x) => x.id === folderId);
+        if (!f) return;
+        // Picking happens in the full persona list.
+        foldersMode = false;
+        openFolderId = null;
+        selectedId = null;
+        detail.hidden = true;
+        multiAdd = { folderId, name: f.name, picked: new Set(firstId ? [firstId] : []) };
+        multiBar.hidden = false;
+        renderGrid();
+    }
+
+    function endMultiAdd() {
+        multiAdd = null;
+        multiBar.hidden = true;
+        for (const t of grid.querySelectorAll('.pl-multi-in, .pl-multi-picked')) t.classList.remove('pl-multi-in', 'pl-multi-picked');
+    }
+
+    function cancelMultiAdd() { endMultiAdd(); }
+
+    function finishMultiAdd() {
+        if (!multiAdd) return;
+        const { folderId, name, picked } = multiAdd;
+        const inIt = new Set(adapter.getFolders?.().find((f) => f.id === folderId)?.members ?? []);
+        let n = 0;
+        for (const id of picked) if (!inIt.has(id)) { adapter.addPersonaToFolder(folderId, id); n++; }
+        endMultiAdd();
+        if (n) globalThis.toastr?.success?.(`Added ${n} persona${n === 1 ? '' : 's'} to \u201c${name}\u201d.`, 'Persona Library');
+        renderGrid();
+    }
+
+    /** Step 1 of "Add multiple": which folder? (or make a new one). */
+    function openFolderChooser(p) {
+        const listEl = el('div', { class: 'pl-pick-list' });
+        const go = (fid) => { closeDialog(); startMultiAdd(fid, p?.id); };
+        const folders = foldersOf();
+        listEl.replaceChildren(...(folders.length ? folders.map((f) => el('button', {
+            class: 'pl-pick-row', type: 'button', onclick: () => go(f.id),
+        }, [
+            el('i', { class: 'fa-solid fa-folder pl-folder-check' }),
+            el('span', { class: 'pl-pick-name', text: f.name }),
+            el('span', { class: 'pl-pick-meta', text: `${f.members.length}` }),
+        ])) : [el('div', { class: 'pl-pick-empty', text: 'No folders yet \u2014 create one below.' })]));
+        const newF = el('button', {
+            class: 'pl-btn', type: 'button', text: '+ New folder',
+            onclick: async () => {
+                const name = ((await (adapter.promptText?.('Name for the new folder:', '') ?? Promise.resolve(window.prompt('Name for the new folder:', '')))) ?? '').trim();
+                if (!name) return;
+                go(adapter.saveFolder({ name }));
+            },
+        });
+        openDialog(el('div', { class: 'pl-dialog-modal' }, [
+            el('div', { class: 'pl-dialog-title', text: 'Add multiple personas to which folder?' }),
+            el('div', { class: 'pl-dialog-body pl-pick-body' }, [listEl]),
+            el('div', { class: 'pl-dialog-actions' }, [newF, el('button', { class: 'pl-btn', type: 'button', text: 'Cancel', onclick: () => closeDialog() })]),
+        ]));
+    }
+
+    function openFolderMenu(e, f) {
+        e.preventDefault();
+        ctxMenu.open({
+            x: e.clientX, y: e.clientY, anchorRect: e.currentTarget.getBoundingClientRect(),
+            items: [
+                { title: f.name },
+                { icon: 'fa-folder-open', label: 'Open', onClick: () => { openFolderId = f.id; renderGrid(); } },
+                { icon: 'fa-pen', label: 'Edit\u2026', onClick: () => openFolderEditor(f.id) },
+                'sep',
+                { icon: 'fa-trash', label: 'Delete folder', danger: true, onClick: () => deleteFolderFlow(f) },
+            ],
+            extraDismissTargets: [gridWrap],
+        });
+    }
+
+    async function deleteFolderFlow(f) {
+        if (!(await askConfirm(`Delete the folder \u201c${f.name}\u201d? The personas inside are not deleted.`))) return;
+        try {
+            await adapter.deleteFolder(f.id);
+            if (openFolderId === f.id) openFolderId = null;
+        } catch (e) {
+            console.error('[PersonaLibrary] delete folder failed', e);
+            globalThis.toastr?.error?.('Could not delete the folder.', 'Persona Library');
+        }
+        renderGrid();
+    }
+
+    /** Create (id = null) or edit a folder: name, synopsis, description, thumbnail. */
+    function openFolderEditor(id) {
+        const existing = id ? foldersOf().find((f) => f.id === id) : null;
+        const nameIn = el('input', { type: 'text', class: 'pl-name-input', maxlength: '80', placeholder: 'e.g. Marvel crossover', value: existing?.name ?? '' });
+        const synIn = el('input', { type: 'text', class: 'pl-name-input', maxlength: '280', placeholder: 'One line: what is this folder?', value: existing?.synopsis ?? '' });
+        const descIn = el('textarea', { class: 'pl-folder-desc-input', rows: '5', maxlength: '8000', placeholder: 'Longer notes about this folder\u2026', spellcheck: 'true' });
+        descIn.value = existing?.description ?? '';
+        let pendingFile = null;
+        let removeThumb = false;
+        const preview = el('div', { class: 'pl-folder-thumb-preview' });
+        const fileIn = el('input', { type: 'file', accept: 'image/*', hidden: true });
+        const removeBtn = el('button', { class: 'pl-btn', type: 'button', text: 'Remove', onclick: () => { pendingFile = null; removeThumb = true; drawPreview(); } });
+        const drawPreview = () => {
+            let node;
+            if (pendingFile) node = el('img', { src: URL.createObjectURL(pendingFile), alt: '' });
+            else if (existing?.thumb && !removeThumb) node = el('img', { src: existing.thumb, alt: '' });
+            else node = el('i', { class: 'fa-solid fa-folder' });
+            preview.replaceChildren(node);
+            removeBtn.hidden = !(pendingFile || (existing?.thumb && !removeThumb));
+        };
+        fileIn.addEventListener('change', () => {
+            const f = fileIn.files?.[0];
+            if (f && (f.type || '').startsWith('image/')) { pendingFile = f; removeThumb = false; drawPreview(); }
+            fileIn.value = '';
+        });
+        drawPreview();
+
+        const saveBtn = el('button', { class: 'pl-btn pl-primary', type: 'button', text: existing ? 'Save' : 'Create' });
+        const cancelBtn = el('button', { class: 'pl-btn', type: 'button', text: 'Cancel', onclick: () => closeDialog() });
+        saveBtn.onclick = async () => {
+            saveBtn.disabled = true;
+            dialogBusy = true;
+            try {
+                const fid = adapter.saveFolder({ id: existing?.id, name: nameIn.value, synopsis: synIn.value, description: descIn.value });
+                if (pendingFile) await adapter.setFolderThumbnail(fid, pendingFile);
+                else if (removeThumb) await adapter.clearFolderThumbnail(fid);
+            } catch (e) {
+                console.error('[PersonaLibrary] save folder failed', e);
+                globalThis.toastr?.error?.('Could not save the folder (or its image).', 'Persona Library');
+            }
+            dialogBusy = false;
+            closeDialog();
+            renderGrid();
+        };
+        const actions = [existing && el('button', { class: 'pl-btn pl-danger', type: 'button', text: 'Delete', onclick: () => { closeDialog(); deleteFolderFlow(existing); } }), cancelBtn, saveBtn];
+        openDialog(el('div', { class: 'pl-dialog-modal' }, [
+            el('div', { class: 'pl-dialog-title', text: existing ? 'Edit folder' : 'New folder' }),
+            el('div', { class: 'pl-dialog-body' }, [
+                el('div', { class: 'pl-field' }, [el('label', { text: 'Name' }), nameIn]),
+                el('div', { class: 'pl-field' }, [el('label', { text: 'Synopsis' }), synIn]),
+                el('div', { class: 'pl-field' }, [el('label', { text: 'Description' }), descIn]),
+                el('div', { class: 'pl-field' }, [el('label', { text: 'Thumbnail (optional \u2014 otherwise a collage of the first few personas)' }),
+                    el('div', { class: 'pl-folder-thumb-row' }, [preview, el('button', { class: 'pl-btn', type: 'button', text: 'Upload image', onclick: () => fileIn.click() }), removeBtn, fileIn])]),
+            ]),
+            el('div', { class: 'pl-dialog-actions' }, actions.filter(Boolean)),
+        ]));
+        nameIn.focus();
+    }
+
+    /** "Add to folder…": tick/untick any number of folders for one persona. */
+    function openFolderPicker(p) {
+        const listEl = el('div', { class: 'pl-pick-list' });
+        const draw = () => {
+            const folders = foldersOf();
+            listEl.replaceChildren(...(folders.length ? folders.map((f) => {
+                const inIt = f.members.includes(p.id);
+                return el('button', {
+                    class: `pl-pick-row${inIt ? ' pl-selected' : ''}`, type: 'button',
+                    onclick: () => {
+                        if (inIt) adapter.removePersonaFromFolder(f.id, p.id); else adapter.addPersonaToFolder(f.id, p.id);
+                        draw();
+                        renderGrid();
+                    },
+                }, [
+                    el('i', { class: `fa-solid ${inIt ? 'fa-square-check' : 'fa-square'} pl-folder-check` }),
+                    el('span', { class: 'pl-pick-name', text: f.name }),
+                    el('span', { class: 'pl-pick-meta', text: `${f.members.length}` }),
+                ]);
+            }) : [el('div', { class: 'pl-pick-empty', text: 'No folders yet \u2014 create one below.' })]));
+        };
+        draw();
+        const newBtnF = el('button', {
+            class: 'pl-btn', type: 'button', text: '+ New folder',
+            onclick: async () => {
+                const name = ((await (adapter.promptText?.('Name for the new folder:', '') ?? Promise.resolve(window.prompt('Name for the new folder:', '')))) ?? '').trim();
+                if (!name) return;
+                const fid = adapter.saveFolder({ name });
+                adapter.addPersonaToFolder(fid, p.id);
+                draw();
+                renderGrid();
+            },
+        });
+        openDialog(el('div', { class: 'pl-dialog-modal' }, [
+            el('div', { class: 'pl-dialog-title', text: `Folders for \u201c${p.name}\u201d` }),
+            el('div', { class: 'pl-dialog-body pl-pick-body' }, [listEl]),
+            el('div', { class: 'pl-dialog-actions' }, [newBtnF, el('button', { class: 'pl-btn pl-primary', type: 'button', text: 'Done', onclick: () => closeDialog() })]),
+        ]));
+    }
+
     function renderGrid() {
         if (overlayMode) return; // no grid in the chat-bar overlay
         const all = adapter.getPersonas() ?? [];
@@ -655,20 +1131,39 @@ export function createPersonaLibrary(container, adapter, options = {}) {
         // counter re-renders once when they land and never loops.
         if (isTokenSort(settings.sort)) tokenCounter.ensure(all, adapter, () => renderGrid());
 
+        const scrollTop = gridWrap.scrollTop;
+        // An open folder that was deleted (here or elsewhere) just closes.
+        const on = foldersOn();
+        if (!on) { if (multiAdd) endMultiAdd(); foldersMode = false; openFolderId = null; }
+        if (foldersBtn) foldersBtn.hidden = !on;
+        const curFolder = openFolderId ? adapter.getFolders?.().find((f) => f.id === openFolderId) : null;
+        if (openFolderId && !curFolder) openFolderId = null;
+        // \u201cManual order\u201d only exists as a sort choice inside a folder.
+        if (curFolder) { if (!manualOpt.parentNode) sort.append(manualOpt); sort.value = curFolder.manual ? 'manual' : settings.sort; }
+        else { manualOpt.remove(); sort.value = settings.sort; }
+        grid.classList.toggle('pl-grid-manual', !!curFolder?.manual && !multiAdd);
+        foldersBtn?.classList.toggle('pl-icon-active', foldersMode);
+        foldersBtn?.setAttribute('aria-pressed', foldersMode ? 'true' : 'false');
+        foldersBtn && (foldersBtn.title = foldersMode ? 'Back to all personas' : 'Folders');
+        if (foldersMode && !openFolderId) { renderFolderCards(all, scrollTop); return; }
+
         const list = visiblePersonas();
         const activeId = adapter.getActiveId?.() ?? null;
-        const scrollTop = gridWrap.scrollTop;
         grid.replaceChildren();
+        const openFolder = openFolderId ? adapter.getFolders().find((f) => f.id === openFolderId) : null;
+        const head = openFolder ? folderHeader(openFolder, all) : null;
         count.textContent = `${list.length} persona${list.length === 1 ? '' : 's'}`;
 
         if (!list.length) {
-            gridWrap.replaceChildren(el('div', {
+            setWrap([head, el('div', {
                 class: 'pl-empty',
-                text: all.length ? 'No personas match your filters.' : 'No personas yet.',
-            }));
+                text: openFolder && !openFolder.members.length
+                    ? 'This folder is empty. Right-click a persona (or use its \u22ee button) and choose \u201cAdd to folder\u2026\u201d.'
+                    : (all.length ? 'No personas match your filters.' : 'No personas yet.'),
+            })]);
             return;
         }
-        if (!gridWrap.contains(grid)) gridWrap.replaceChildren(grid);
+        setWrap([head, grid]);
 
         for (const p of list) {
             const fav = favs.has(p.id);
@@ -676,8 +1171,9 @@ export function createPersonaLibrary(container, adapter, options = {}) {
                 class: `pl-tile${p.id === selectedId ? ' pl-selected' : ''}${p.id === activeId ? ' pl-active' : ''}${p.id === compareFrom ? ' pl-compare-source' : ''}`,
                 type: 'button',
                 title: p.incarnationCount > 1 ? `${p.name} \u00b7 ${p.incarnationCount} incarnations` : p.name,
-                onclick: () => (compareFrom ? finishCompare(p.id) : select(p.id)),
-                ondblclick: () => { if (!compareFrom) use(p.id); },
+                'data-pl-id': p.id,
+                onclick: () => (multiAdd ? toggleMultiPick(p.id) : compareFrom ? finishCompare(p.id) : select(p.id)),
+                ondblclick: () => { if (!compareFrom && !multiAdd) use(p.id); },
             }, [
                 personaImg({ alt: p.name, loading: 'lazy', decoding: 'async', src: p.image }, p.id, adapter),
                 el('span', { class: 'pl-tile-name', text: p.name }),
@@ -710,11 +1206,22 @@ export function createPersonaLibrary(container, adapter, options = {}) {
             }, [el('i', { class: 'fa-solid fa-layer-group' }), el('span', { text: String(p.incarnationCount) })]);
             grid.append(el('div', {
                 class: 'pl-tile-cell',
+                'data-pl-cell': p.id,
                 oncontextmenu: (e) => openTileMenu(e, p),
             }, [tile, star, incBadge]));
         }
+        markMultiTiles();
         if (restorePending) applyScrollRestore();
         else gridWrap.scrollTop = scrollTop;
+    }
+
+    function syncSelectedTile() {
+        if (overlayMode) return;
+        for (const t of grid.querySelectorAll('.pl-tile.pl-selected')) t.classList.remove('pl-selected');
+        if (!selectedId) return;
+        for (const t of grid.querySelectorAll('.pl-tile[data-pl-id]')) {
+            if (t.getAttribute('data-pl-id') === selectedId) { t.classList.add('pl-selected'); break; }
+        }
     }
 
     function select(id) {
@@ -727,7 +1234,7 @@ export function createPersonaLibrary(container, adapter, options = {}) {
         sectionsDraft = null; // force a fresh reload for the newly selected persona
         variantsDraft = null;
         detailTab = validTab(detailTab); // keep the last-used tab
-        renderGrid();
+        syncSelectedTile(); // selection only changes one highlight: no need to rebuild every tile
         renderDetail();
     }
 
@@ -817,6 +1324,11 @@ export function createPersonaLibrary(container, adapter, options = {}) {
         switchIncarnation: adapter.switchPersonaIncarnation ? (p, key) => switchIncarnationFlow(p.id, key) : null,
         manageIncarnations: adapter.createPersonaIncarnation ? (p) => manageIncarnations(p.id) : null,
     };
+    // Only offered while the Folders feature is switched on in the settings.
+    const folderMenuActions = () => (foldersOn() && adapter.addPersonaToFolder ? {
+        addToFolder: (p) => openFolderPicker(p),
+        addManyToFolder: (p) => { if (!compareFrom) openFolderChooser(p); },
+    } : {});
 
     function openTileMenu(e, p) {
         e.preventDefault();
@@ -829,7 +1341,11 @@ export function createPersonaLibrary(container, adapter, options = {}) {
                 isFav: favoriteSet().has(p.id),
                 canCompare: (adapter.getPersonas() ?? []).length > 1,
                 incarnations: adapter.getPersonaIncarnations?.(p.id) ?? null,
-                actions: menuActions,
+                actions: {
+                    ...menuActions,
+                    ...folderMenuActions(),
+                    ...(openFolderId && foldersOn() ? { removeFromFolder: (q) => { adapter.removePersonaFromFolder(openFolderId, q.id); renderGrid(); } } : {}),
+                },
             }),
             extraDismissTargets: [gridWrap],
         });
@@ -3056,6 +3572,8 @@ export function createPersonaLibrary(container, adapter, options = {}) {
 
     return {
         refresh,
+        // The settings panel flipped a setting (e.g. Folders on/off): redraw now.
+        applySettings: () => { renderGrid(); },
         // Driven by the chat-bar Quick Switcher's right-click menu (see
         // library-bridge.js), so both menus run the exact same flows.
         openPersona: (id, tab) => { if (byId(id)) openPersona(id, tab); },

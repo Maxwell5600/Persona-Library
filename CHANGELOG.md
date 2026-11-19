@@ -9,9 +9,25 @@ nothing parses one from the other on purpose, so both stay simple and
 independently correct. If you add an entry to one, add the matching one to
 the other.
 
+## v1.10.4
+
+### Added
+- Folders: group personas (say, everyone from one universe) into folders. A new folder button sits next to the favorites filter in the gallery toolbar and switches the grid to your folders. Each folder has a name, a short synopsis, a longer description and an optional thumbnail (upload an image, or leave it and a collage of its first few personas is used). Opening a folder shows the normal gallery — search, sort and favorites included — with only that folder's personas. Add a persona from its right-click / three-dot menu (“Add to folder…”, tick as many folders as you like); inside a folder the same menu offers “Remove from this folder”. Folders only reference personas, so removing one or deleting a folder never deletes the persona.
+
+- Folders: a new “Add multiple to folder…” entry in the persona right-click / three-dot menu. Pick a folder (or make a new one), then tick as many personas as you like in the normal gallery (search still works, and “Select all shown” ticks everything in view; ones already in the folder are dimmed) and press Add. Nothing changes until you press Add, and Cancel leaves everything as it was.
+- Folder view: the banner at the top of an open folder is now a slim single row (back, thumbnail, name and synopsis side by side, edit), about half its old height. The description folds out from a small chevron.
+- Folders: a “Manual order” choice in the sort menu (only inside a folder) lets you drag personas into any order. Mouse: click and drag; touch: press and hold, then drag. The order is saved per folder, works with search filters, and picking any other sort leaves your manual order in place for next time.
+- Folders are now an optional extra that is OFF by default. Turn them on with the new “Folders” checkbox under Extensions → Persona Library, the same way as the Quick persona switcher; the checkbox has a short description of what it adds. Turning it off only hides the feature — your folders are kept.
+- A one-time pop-up on the first load after installing or updating points people to the settings: “Extra features in the extension settings”, with a one-line summary of the Quick persona switcher and Folders. It never shows again.
+
+### Fixed
+- The “Open Worlds/Lorebooks” shortcut now works with PTMT: it clicks the visible World Info tab by its label (and sends a full press, not just a click), and only falls back to SillyTavern's own hidden icon when there is no such tab.
+- The expanded text editor's close (X) button is now a small button inside the editor's header bar instead of a big circle pinned to the screen corner, so it no longer lands on top of PTMT's tabs.
+
 ## v1.10.2
 
 ### Changed
+- Under-the-hood speed-ups (no behavior changes): the page-wide watcher that re-attaches the Quick Switcher now runs at most 4 times a second instead of on every change SillyTavern makes (it was firing on every streamed chat token); window resizing refreshes once per frame; clicking a tile just moves the highlight instead of rebuilding every tile; typing in the search box re-draws the grid once you pause; and the persona list is read with fewer repeated lookups.
 - Tags are now reusable across your whole library. A tiny caret inside the Tag field (when creating an incarnation, and in “Edit tags…”) opens a small floating menu of every tag you've used on any persona, most-used first, plus “Original”; typing narrows it. It floats and scrolls, so nothing in the window grows however many tags you collect.
 - Incarnation tags: every incarnation can now carry an optional tag, shown after its name like “Steve (Fighter)” — the same way the original used to be marked. Set one when creating an incarnation, or edit any of them (the original included) from “Edit tags…” in the incarnation dropdown. The automatic “(original)” label is gone: a persona’s original is now just “Steve” unless you tag it yourself (try “Original”). Tags are display-only and never become part of the persona’s name.
 - New incarnations can be copied from another persona. A third option in the New incarnation window, “Copy from another persona”, offers a searchable list of your whole library (plus a picker for that persona’s own incarnations, if it has any) — handy for folding separate “Steve (Fighter)” / “Steve (Ranger)” personas into one persona’s incarnations. It’s a one-time copy and the persona you copy from is never changed.

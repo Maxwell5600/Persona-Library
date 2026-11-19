@@ -810,7 +810,21 @@
 
 .pl-text-focus-bar {
     flex: 0 0 auto;
-    padding: 0 56px 12px 4px; /* right padding clears the fixed close button */
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 0 0 10px 4px;
+}
+/* The shared close button is pinned to the screen corner for the image
+   lightbox; here it sits in the bar, small, so it can't land on top of
+   anything above the drawer (e.g. PTMT's tab bar). */
+.pl-text-focus-bar .pl-lightbox-close {
+    position: static;
+    flex: 0 0 auto;
+    width: 30px;
+    height: 30px;
+    font-size: 0.9em;
 }
 
 .pl-text-focus-title {
@@ -2826,4 +2840,69 @@ body.pl-active #PersonaManagement {
     inset: var(--pl-fx-top, 0) var(--pl-fx-right, 0) var(--pl-fx-bottom, 0) var(--pl-fx-left, 0);
     width: auto;  /* .pl-root's width/height:100% would otherwise override the insets */
     height: auto;
+}
+
+/* ---------- Folders ---------- */
+.pl-folder-tile .pl-tile-name { opacity: 1; font-weight: 600; }
+.pl-folder-thumb { width: 100%; height: 100%; object-fit: cover; object-position: center top; display: block; }
+.pl-folder-collage { display: grid; gap: 1px; background: var(--pl-border); }
+.pl-folder-collage img { width: 100%; height: 100%; object-fit: cover; object-position: center top; min-height: 0; min-width: 0; }
+.pl-folder-collage.pl-collage-1 { grid-template-columns: 1fr; }
+.pl-folder-collage.pl-collage-2 { grid-template-columns: 1fr 1fr; }
+.pl-folder-collage.pl-collage-3 { grid-template: 1fr 1fr / 1fr 1fr; }
+.pl-folder-collage.pl-collage-3 img:first-child { grid-row: 1 / 3; }
+.pl-folder-collage.pl-collage-4 { grid-template: 1fr 1fr / 1fr 1fr; }
+.pl-folder-empty { display: flex; align-items: center; justify-content: center; font-size: 2.2em; opacity: 0.35; height: 100%; }
+.pl-tile.pl-folder-new {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+    border: 1px dashed var(--pl-border); background: transparent; color: inherit; opacity: 0.7; font-size: 0.85em;
+}
+.pl-tile.pl-folder-new:hover { opacity: 1; }
+.pl-tile.pl-folder-new i { font-size: 1.6em; }
+
+.pl-folder-head {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 6px; padding: 4px 8px;
+    border: 1px solid var(--pl-border); border-radius: 8px; background: var(--pl-surface-2);
+}
+.pl-folder-head .pl-folder-head-btn { flex: 0 0 auto; width: 28px; height: 28px; font-size: 0.85em; }
+.pl-folder-head-thumb { flex: 0 0 auto; width: 26px; height: 34px; border-radius: 4px; overflow: hidden; object-fit: cover; object-position: center top; font-size: 0.8em; }
+.pl-folder-head-text { flex: 1 1 0; min-width: 0; display: flex; align-items: baseline; gap: 10px; overflow: hidden; white-space: nowrap; }
+.pl-folder-head-name { font-weight: 600; flex: 0 0 auto; max-width: 50%; overflow: hidden; text-overflow: ellipsis; }
+.pl-folder-head-syn { opacity: 0.7; font-size: 0.88em; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.pl-folder-head-more { flex: 0 0 auto; border: none; background: transparent; color: inherit; opacity: 0.6; cursor: pointer; padding: 4px 6px; }
+.pl-folder-head-more:hover { opacity: 1; }
+.pl-folder-head-desc { flex: 1 0 100%; font-size: 0.88em; white-space: pre-wrap; opacity: 0.9; max-height: 160px; overflow-y: auto; padding: 2px 2px 4px; }
+
+.pl-folder-desc-input { width: 100%; box-sizing: border-box; resize: vertical; }
+.pl-folder-thumb-row { display: flex; align-items: center; gap: 8px; }
+.pl-folder-thumb-preview {
+    width: 48px; height: 64px; border-radius: 6px; overflow: hidden; flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: center; background: var(--pl-surface-2); opacity: 0.95;
+}
+.pl-folder-thumb-preview img { width: 100%; height: 100%; object-fit: cover; }
+.pl-folder-check { flex: 0 0 auto; opacity: 0.85; }
+.pl-btn[hidden] { display: none; }
+
+/* "Add multiple to folder": ticking personas in the grid */
+.pl-tile.pl-multi-picked { outline: 2px solid var(--pl-accent); outline-offset: -2px; }
+.pl-tile.pl-multi-picked::after,
+.pl-tile.pl-multi-in::after {
+    content: '\2713'; position: absolute; top: 6px; left: 6px; width: 22px; height: 22px; border-radius: 999px;
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.9em; z-index: 2;
+}
+.pl-tile.pl-multi-picked::after { background: var(--pl-accent); color: #000; }
+.pl-tile.pl-multi-in { cursor: default; }
+.pl-tile.pl-multi-in img { opacity: 0.4; }
+.pl-tile.pl-multi-in::after { background: rgba(0, 0, 0, 0.65); color: #fff; }
+.pl-multi-bar[hidden] { display: none; }
+.pl-multi-bar .pl-compare-bar-text { flex: 1 1 auto; }
+
+.pl-folders-btn[hidden] { display: none; }
+/* Manual order: tiles can be dragged */
+.pl-grid-manual .pl-tile-cell { cursor: grab; -webkit-user-select: none; user-select: none; }
+.pl-grid-manual .pl-tile-cell img { -webkit-user-drag: none; }
+.pl-grid-dragging { cursor: grabbing; }
+.pl-tile-cell.pl-dragging {
+    position: relative; z-index: 30; pointer-events: none; opacity: 0.9;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.55); border-radius: 8px;
 }

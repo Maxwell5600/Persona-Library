@@ -52,6 +52,9 @@ export function personaMenuItems(p, { isActive, isFav, canCompare = true, incarn
         'sep',
         a.toggleFavorite && { icon: 'fa-star', label: isFav ? 'Remove from favorites' : 'Add to favorites', keepOpen: true, onClick: () => a.toggleFavorite(p) },
         a.compare && canCompare && { icon: 'fa-code-compare', label: 'Compare with\u2026', onClick: () => a.compare(p) },
+        a.addToFolder && { icon: 'fa-folder-plus', label: 'Add to folder\u2026', onClick: () => a.addToFolder(p) },
+        a.addManyToFolder && { icon: 'fa-list-check', label: 'Add multiple to folder\u2026', onClick: () => a.addManyToFolder(p) },
+        a.removeFromFolder && { icon: 'fa-folder-minus', label: 'Remove from this folder', onClick: () => a.removeFromFolder(p) },
     ];
     // Incarnations: only persona entries that actually have some get a list;
     // everyone else just gets the "add one" shortcut (if the host offers it).
