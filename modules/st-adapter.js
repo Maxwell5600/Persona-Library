@@ -1488,7 +1488,11 @@ export function getPersonaIncarnations(id) {
 function captureLive(id) {
     const d = powerUser().persona_descriptions?.[id] ?? {};
     // eslint-disable-next-line no-unused-vars
-    const { date_added, date_last_used, ...desc } = d;
+    // Character/group connections (SillyTavern's native locks) are persona-level,
+    // shared by all incarnations (see the memory section below), so they are
+    // never part of an incarnation's own snapshot.
+    // eslint-disable-next-line no-unused-vars
+    const { date_added, date_last_used, connections, ...desc } = d;
     return structuredClone({
         name: personaNameOf(id),
         desc,
@@ -1506,7 +1510,13 @@ function writeLive(id, snap) {
     pu.personas = pu.personas ?? {};
     pu.personas[id] = snap.name;
     pu.persona_descriptions = pu.persona_descriptions ?? {};
-    const d = { ...structuredClone(snap.desc ?? {}), date_added: cur.date_added, date_last_used: cur.date_last_used };
+    // Keep the live connections across the swap. Snapshots made by older
+    // versions still carry their own connections; fold those in so no lock
+    // is lost (they simply become shared).
+    const legacy = Array.isArray(snap.desc?.connections) ? snap.desc.connections : [];
+    const connections = [...(Array.isArray(cur.connections) ? cur.connections : [])];
+    for (const x of legacy) if (!connections.some((y) => y?.type === x?.type && y?.id === x?.id)) connections.push(structuredClone(x));
+    const d = { ...structuredClone(snap.desc ?? {}), date_added: cur.date_added, date_last_used: cur.date_last_used, connections };
     pu.persona_descriptions[id] = d;
     const put = (store, v) => { if (v) store[id] = structuredClone(v); else delete store[id]; };
     put(sectionsStore(), snap.sections);
@@ -1563,7 +1573,7 @@ async function deleteSlotFiles(slot, { keepGallery = false } = {}) {
 }
 
 /** Runs inside the gallery queue. */
-async function switchIncarnationInner(id, targetKey) {
+async function switchIncarnationInner(id, targetKey, { record = true } = {}) {
     guardNoGeneration(id);
     const rec = incStore()[id];
     if (!rec) throw new Error('This persona has no incarnations.');
@@ -1590,8 +1600,147 @@ async function switchIncarnationInner(id, targetKey) {
     target.snapshot = null;
     rec.activeKey = targetKey;
     ctx()?.saveSettingsDebounced?.();
+    // A deliberate switch while this persona is locked here is what the lock should bring back next time.
+    if (record) rememberIncarnation(id, targetKey);
     // The newly live incarnation may have image bindings for the open chat.
     if (getActiveId() === id) { try { await applyBoundImageInner(id); } catch (e) { console.warn('[PersonaLibrary] bound image apply failed', e); } }
+}
+
+/*
+ * Locks and incarnations.
+ *
+ * SillyTavern's locks only name a PERSONA: a chat lock is chat_metadata.persona,
+ * and a character/group lock is an entry {type:'character'|'group', id} in the
+ * persona's `connections`. They know nothing of incarnations, so on their own
+ * they can't bring the right one back. So, only while a persona is actually
+ * locked in the open chat (or to the open character/group), we remember which
+ * incarnation was live there and restore it when you come back. Unlocked use
+ * is never touched. Chat lock wins over character lock, as in SillyTavern.
+ *
+ *   extensionSettings[MEMORY_KEY] = { chat: { chatId: {personaId: key} },
+ *                                     character: { 'char:avatar'|'group:id': {personaId: key} } }
+ */
+const MEMORY_KEY = 'personaLibraryIncarnationMemory';
+
+function memoryStore() {
+    const c = ctx();
+    if (!c?.extensionSettings) return { chat: {}, character: {} };
+    const cur = c.extensionSettings[MEMORY_KEY];
+    if (!cur || typeof cur !== 'object') c.extensionSettings[MEMORY_KEY] = { chat: {}, character: {} };
+    const m = c.extensionSettings[MEMORY_KEY];
+    m.chat = m.chat ?? {};
+    m.character = m.character ?? {};
+    return m;
+}
+
+/** Which of SillyTavern's locks hold for this persona right now, and under what keys. */
+function lockContext(id) {
+    const c = ctx();
+    if (!c || !id) return { chatKey: null, charKey: null };
+    const chatId = c.getCurrentChatId?.() ?? null;
+    const chatLocked = !!chatId && c.chatMetadata?.persona == id;
+    const inGroup = !!c.groupId;
+    const avatar = c.characters?.[c.characterId]?.avatar;
+    const conns = powerUser().persona_descriptions?.[id]?.connections;
+    const charLocked = Array.isArray(conns) && conns.some((x) => (inGroup
+        ? x?.type === 'group' && x.id === c.groupId
+        : !!avatar && x?.type === 'character' && x.id === avatar));
+    return {
+        chatKey: chatLocked ? String(chatId) : null,
+        charKey: charLocked ? (inGroup ? `group:${c.groupId}` : `char:${avatar}`) : null,
+    };
+}
+
+/** Writes `key` as the remembered incarnation for the most specific lock in force. */
+function rememberIncarnation(id, key) {
+    try {
+        const { chatKey, charKey } = lockContext(id);
+        const m = memoryStore();
+        if (chatKey) (m.chat[chatKey] ??= {})[id] = key;
+        else if (charKey) (m.character[charKey] ??= {})[id] = key;
+        else return;
+        ctx()?.saveSettingsDebounced?.();
+    } catch (e) { console.warn('[PersonaLibrary] could not remember the incarnation for this lock', e); }
+}
+
+let incMemoryHandler = null;
+let incMemoryTimer = null;
+let incMemoryPoll = null;
+// True from the moment the chat/persona changes until the restore has settled,
+// so the periodic capture below can't record the OLD chat's incarnation as the new chat's.
+let incMemoryBusy = false;
+
+/**
+ * SillyTavern fires no event when you lock a chat or character while already
+ * inside it, so a lock made AFTER choosing an incarnation would never be seen.
+ * A cheap periodic check keeps the remembered incarnation in step with what is
+ * live whenever a lock is in force (it does nothing for unlocked personas or
+ * personas with a single incarnation).
+ */
+function captureLockedIncarnation() {
+    if (incMemoryBusy || document.hidden) return;
+    const id = getActiveId();
+    const rec = id ? incStore()[id] : null;
+    if (!rec || !Array.isArray(rec.slots) || rec.slots.length < 2) return;
+    const { chatKey, charKey } = lockContext(id);
+    if (!chatKey && !charKey) return;
+    const m = memoryStore();
+    const stored = chatKey ? m.chat[chatKey]?.[id] : m.character[charKey]?.[id];
+    if (stored !== rec.activeKey) rememberIncarnation(id, rec.activeKey);
+}
+
+async function restoreRememberedIncarnation(attempt = 0) {
+    let retry = false;
+    try {
+        const id = getActiveId();
+        const rec = id ? incStore()[id] : null;
+        if (!rec || !Array.isArray(rec.slots) || rec.slots.length < 2) return;
+        const { chatKey, charKey } = lockContext(id);
+        if (!chatKey && !charKey) return; // not locked here: leave the persona exactly as it is
+        const m = memoryStore();
+        const wanted = [chatKey && m.chat[chatKey]?.[id], charKey && m.character[charKey]?.[id]]
+            .find((k) => k && incSlot(rec, k));
+        console.log('[PersonaLibrary] lock memory', { persona: id, chatKey, charKey, remembered: wanted ?? null, live: rec.activeKey });
+        if (!wanted) { rememberIncarnation(id, rec.activeKey); return; } // first visit: remember what's live
+        if (wanted === rec.activeKey) return;
+        try {
+            await galleryEnqueue(id, () => switchIncarnationInner(id, wanted, { record: false }));
+            try { globalThis.toastr?.info?.(`Switched to \u201c${incSlot(rec, wanted)?.name ?? 'incarnation'}\u201d for this chat.`, 'Persona Library'); } catch { /* cosmetic */ }
+        } catch (e) {
+            console.warn('[PersonaLibrary] could not restore the remembered incarnation', e);
+            retry = attempt < 5; // e.g. a message was generating: try again shortly
+        }
+    } finally {
+        if (retry) incMemoryTimer = setTimeout(() => { restoreRememberedIncarnation(attempt + 1); }, 3000);
+        else incMemoryBusy = false;
+    }
+}
+
+/** Call once at boot; restores the remembered incarnation when the chat or persona changes. Returns an unregister fn. */
+export function registerIncarnationMemoryHook() {
+    if (incMemoryHandler) return () => {};
+    const c = ctx();
+    const es = c?.eventSource;
+    const types = c?.eventTypes ?? c?.event_types ?? {};
+    const names = [types.CHAT_CHANGED, types.PERSONA_CHANGED].filter(Boolean);
+    if (!es?.on || !names.length) return () => {};
+    incMemoryHandler = () => {
+        // A chat switch fires CHAT_CHANGED and then (through the locks) PERSONA_CHANGED; settle on the final state once.
+        incMemoryBusy = true;
+        clearTimeout(incMemoryTimer);
+        incMemoryTimer = setTimeout(() => { restoreRememberedIncarnation(); }, 450);
+    };
+    for (const n of names) es.on(n, incMemoryHandler);
+    incMemoryPoll = setInterval(captureLockedIncarnation, 700);
+    incMemoryHandler();
+    return () => {
+        for (const n of names) { try { es.removeListener?.(n, incMemoryHandler); } catch { /* ignore */ } }
+        clearTimeout(incMemoryTimer);
+        clearInterval(incMemoryPoll);
+        incMemoryPoll = null;
+        incMemoryBusy = false;
+        incMemoryHandler = null;
+    };
 }
 
 export function switchPersonaIncarnation(id, key) {

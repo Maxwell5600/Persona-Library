@@ -5,7 +5,7 @@
  */
 
 import { createPersonaLibrary } from './modules/gallery.js';
-import { stAdapter, ctx, registerVariantGenerationHook, registerPersonaUsageTracking, registerImageBindingHook } from './modules/st-adapter.js';
+import { stAdapter, ctx, registerVariantGenerationHook, registerPersonaUsageTracking, registerImageBindingHook, registerIncarnationMemoryHook } from './modules/st-adapter.js';
 import { setLibrary, setOverlayFactory, destroyOverlayLibrary } from './modules/library-bridge.js';
 import { mountSettingsPanel, showExtraFeaturesNoticeOnce } from './modules/settings-panel.js';
 import { mountQuickSwitcher, unmountQuickSwitcher } from './modules/quick-switcher.js';
@@ -18,6 +18,7 @@ let mountQueued = false;
 let unregisterVariantHook = null;
 let unregisterUsageTracking = null;
 let unregisterImageBindings = null;
+let unregisterIncarnationMemory = null;
 
 function personaBlock() {
     // #PersonaManagement is SillyTavern's actual drawer-content wrapper for
@@ -165,6 +166,9 @@ async function boot() {
     if (!unregisterUsageTracking) {
         try { unregisterUsageTracking = registerPersonaUsageTracking(); } catch (e) { console.error('[PersonaLibrary] could not register persona usage tracking', e); }
     }
+    if (!unregisterIncarnationMemory) {
+        try { unregisterIncarnationMemory = registerIncarnationMemoryHook(); } catch (e) { console.error('[PersonaLibrary] could not register incarnation memory hook', e); }
+    }
     if (!unregisterImageBindings) {
         try { unregisterImageBindings = registerImageBindingHook(); } catch (e) { console.error('[PersonaLibrary] could not register image binding hook', e); }
     }
@@ -207,6 +211,8 @@ function teardown() {
     unregisterVariantHook = null;
     try { unregisterUsageTracking?.(); } catch { /* ignore */ }
     unregisterUsageTracking = null;
+    try { unregisterIncarnationMemory?.(); } catch { /* ignore */ }
+    unregisterIncarnationMemory = null;
     try { unregisterImageBindings?.(); } catch { /* ignore */ }
     unregisterImageBindings = null;
 }

@@ -31,17 +31,26 @@ browse characters, instead of scrolling a cramped avatar strip.
   recently used (the active persona first, then the one used before it, and
   so on), recently created, recently modified, token count (highest / lowest),
   or favorites first
-- **Favorites** — hover a tile and click its star (always visible once set,
-  and on touch screens). Once you have any, a star button appears in the
-  toolbar to show favorites only
-- **Right-click a tile** (or a persona in the Quick Switcher) for quick actions: Set as active, Edit, Duplicate,
-  Open image gallery, Add/Remove favorite, Compare with…, Delete
-- **Compare** — right-click → *Compare with…*, then click a second persona.
-  A read-only side-by-side window shows token and character counts, injection
-  settings, lorebook, sections and the description with differing words
-  highlighted. Change either side from its dropdown, or swap them
+- **Tile menu button** — hover a tile and a small vertical three-dot button
+  appears; click it for the same menu as a right-click (handy on touch
+  screens). Personas you've favorited show three tiny yellow stars there
+  instead of the dots
+- **Favorites** — add or remove them from that menu. Once you have any, a star
+  button appears in the toolbar to show favorites only
+- **Right-click a tile** for quick actions: Set as active, Edit, Duplicate,
+  Open image gallery, Add/Remove favorite, Compare with…, Manage incarnations,
+  Add to folder (if Folders is on), Delete. Long menus scroll instead of
+  running off the screen
+- **Compare** — right-click → *Compare with…*, then pick a second persona
+  (from the gallery, or from a searchable list when you start it from the chat
+  bar). A read-only side-by-side window shows token and character counts,
+  injection settings, lorebook, sections and the description with differing
+  words highlighted. Change either side from its dropdown, or swap them
 - Remembers where you left off: the last-used detail tab, the grid's scroll
   position, your search and your sort
+- Windows (the editor, Compare, dialogs, the image viewer) stay put on screen
+  however far you've scrolled a long persona list, and open below the tab bar
+  when you use **PTMT** (Probably Too Many Tabs) instead of sliding under it
 - `+ New Persona` right in the toolbar — create one without leaving the gallery
 
 **Detail view** — click any persona to open a large modal with three tabs:
@@ -55,6 +64,13 @@ browse characters, instead of scrolling a cramped avatar strip.
   one big paragraph. Drag the grip handle on any section to reorder it —
   sections are folded into the final description in the order shown, so this
   isn't just cosmetic
+  - **Your own category templates** — the bookmark button on a category
+    section saves its title and field labels (never the text you typed in
+    them) as a template. Saved templates appear in the category dropdown for
+    every persona. A tiny "…" button next to *Add category* lets you hide any
+    of the built-in nine, edit them, reset them, or delete your own
+  - Spell check works in the text boxes, including the expanded full-screen
+    editor (whose close button is now a small button in its header bar)
 - **Preview** — shows *exactly* what gets folded into the prompt the AI
   receives, live, as you edit — core description plus every enabled section
   and currently-active variant, composed exactly the way SillyTavern will
@@ -76,20 +92,57 @@ Variants (below) are for smaller tweaks. An **Incarnation** is an entirely
 different version of the same character — e.g. *Steve*, *Steve Z* (zombie
 apocalypse) and *Steve M* (high-fantasy mage) — kept inside ONE persona entry.
 
-- Open a persona; the **Incarnations** bar under its header lists them. Click
-  one to switch, **+ New incarnation** to add one, ✕ to delete (the original
-  can't be deleted).
+- Open a persona and click the small arrow right after the ✓ *Use* button in
+  its header (or right-click a tile → *Manage incarnations…*): the menu lists
+  them. Click one to switch, add a **New incarnation**, or delete one (the
+  original can't be deleted; the delete prompt shows the incarnation's name
+  and tag so you can be sure it's the right one).
+- **Tags** — every incarnation can carry an optional free-text tag, shown after
+  its name like *Steve (Fighter)*. Set one when creating an incarnation or
+  later via *Edit tags…*. None are added automatically — the original is just
+  "Steve" until you tag it. A small caret in the tag field opens a menu of
+  every tag you've already used on any persona (most-used first), so reusing
+  *Mage* on another persona is one click.
 - Each incarnation has completely independent data: name, description,
   sections, injection settings, lorebook, variants, portrait, image gallery,
   bindings and native character connections. Editing one never changes
   another — there is no inheritance or syncing.
-- When creating one you can **start blank**, or make a **one-time copy** of
-  chosen parts from an existing incarnation. After that it is independent.
+- When creating one you can **start blank**, make a **one-time copy** of
+  chosen parts from an existing incarnation, or **copy from another persona**
+  (pick from a searchable list of your whole library — works fine with
+  hundreds of personas). After that it is independent.
 - Alternates never show up as extra personas — not in the gallery, the Quick
   Switcher or SillyTavern's native list. The tile shows a layer badge with the
   count and displays whichever incarnation is currently live.
 - Limits: Duplicate copies only the live incarnation; native character
   connections only apply to the live one; switching is blocked mid-generation.
+
+## Folders (optional, off by default)
+
+Group personas — say, everyone from one universe — into folders. Folders are
+an optional extra, so turn them on under **Extensions → Persona Library →
+Folders**. Turning them off just hides the feature; your folders are kept.
+
+- A **folder button** sits next to the favorites filter in the gallery
+  toolbar. Click it to see your folders as cards; click it again to go back to
+  all personas
+- Each folder has a **name, short synopsis, longer description and thumbnail**.
+  Upload an image for the thumbnail, or leave it and a collage of the first few
+  personas is used. Right-click a folder card (or use its three-dot button) to
+  open, edit or delete it
+- Opening a folder shows the normal gallery with only that folder's personas —
+  search, sort and favorites all still work — under a slim banner with its name
+  and synopsis (the description folds out from a small chevron)
+- A persona can be in **as many folders as you like**. Right-click a persona →
+  *Add to folder…* and tick folders, or choose *Add multiple to folder…* to
+  pick a folder and then tick as many personas as you want in one go (nothing
+  changes until you press Add). Inside a folder, the menu offers *Remove from
+  this folder*
+- **Manual order** — inside a folder, pick *Manual order (drag to arrange)* in
+  the sort menu and drag personas into whatever order you want (mouse: click
+  and drag; touch: press, hold, then drag). The order is saved per folder
+- Folders only *point at* personas: removing one from a folder, or deleting a
+  folder, never deletes the persona
 
 ## Image bindings
 
@@ -167,9 +220,15 @@ restyled to match Persona Library:
   readable over a busy chat log
 - A sort menu inside the popup itself: Name (A–Z), Name (Z–A), Recently
   created, or Token count — independent of the main gallery's own sort
+- **Right-click a persona** in the popup for the same quick actions as the
+  gallery (Edit, Compare with…, Open image gallery, Manage incarnations,
+  Duplicate, Favorite, Delete). They open right over your chat — no need to
+  open the Persona's tab — and never interfere with the gallery's own menu
 
 This is the one thing Persona Library puts in the chat UI itself rather than
-the Persona's tab or the Extensions panel, so it's **off by default**. Turn
+the Persona's tab or the Extensions panel, so it's **off by default** (like
+Folders, it's an optional extra — the first time you load a new version a
+small pop-up reminds you that these extras live in the extension settings). Turn
 it on under **Extensions → Persona Library → Quick persona switcher (chat
 bar)**. If the icon doesn't show up next to your chat input after enabling
 it, it likely fell back to a small floating button in the bottom-right
@@ -259,7 +318,8 @@ something this extension may not cover itself:
   entirely." Both warn first if you have unsaved changes.
 - **Worlds/Lorebooks** (book icon, top toolbar) — jumps straight to
   SillyTavern's native World Info / Lorebook panel, since managing lorebooks
-  isn't something Persona Library reimplements.
+  isn't something Persona Library reimplements. With **PTMT** it clicks the
+  visible *World Info* tab instead of SillyTavern's hidden native icon.
 - **Persona Lore** (book-bookmark icon, in a persona's own detail view) —
   jumps to SillyTavern's native picker for linking/changing which lorebook
   is attached to *that specific persona*, the same way the button above does
