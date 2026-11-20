@@ -1601,7 +1601,7 @@ async function switchIncarnationInner(id, targetKey, { record = true } = {}) {
     rec.activeKey = targetKey;
     ctx()?.saveSettingsDebounced?.();
     // A deliberate switch while this persona is locked here is what the lock should bring back next time.
-    if (record) rememberIncarnation(id, targetKey);
+    // The remembered incarnation is the one active when the lock was made; a manual swap never changes it.
     // The newly live incarnation may have image bindings for the open chat.
     if (getActiveId() === id) { try { await applyBoundImageInner(id); } catch (e) { console.warn('[PersonaLibrary] bound image apply failed', e); } }
 }
@@ -1684,7 +1684,19 @@ function captureLockedIncarnation() {
     const rec = id ? incStore()[id] : null;
     if (!rec || !Array.isArray(rec.slots) || rec.slots.length < 2) { incSeen = ''; return; }
     const { chatKey, charKey } = lockContext(id);
-    if (!chatKey && !charKey) { incSeen = ''; return; }
+    if (!chatKey && !charKey) {
+        // Not locked here: forget any pin for this chat/character so re-locking pins whatever is active then.
+        const c = ctx(); const chatId = c?.getCurrentChatId?.();
+        const av = c?.characters?.[c.characterId]?.avatar;
+        const ck = c?.groupId ? `group:${c.groupId}` : (av ? `char:${av}` : null);
+        const sig0 = `${id}|u|${chatId}|${ck}`;
+        if (sig0 !== incSeen) { incSeen = sig0; return; }
+        const m0 = memoryStore(); let dirty = false;
+        if (chatId && m0.chat[chatId]?.[id]) { delete m0.chat[chatId][id]; dirty = true; }
+        if (ck && m0.character[ck]?.[id]) { delete m0.character[ck][id]; dirty = true; }
+        if (dirty) c?.saveSettingsDebounced?.();
+        return;
+    }
     // SillyTavern swaps its chat id/metadata a moment BEFORE it announces the chat change, so a single
     // look can catch the NEW chat with the OLD chat's incarnation live. Only trust a state seen twice in a row.
     const sig = `${id}|${chatKey}|${charKey}|${rec.activeKey}`;
