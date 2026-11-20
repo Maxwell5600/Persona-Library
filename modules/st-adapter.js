@@ -1677,16 +1677,23 @@ let incMemoryBusy = false;
  * live whenever a lock is in force (it does nothing for unlocked personas or
  * personas with a single incarnation).
  */
+let incSeen = '';
 function captureLockedIncarnation() {
     if (incMemoryBusy || document.hidden) return;
     const id = getActiveId();
     const rec = id ? incStore()[id] : null;
-    if (!rec || !Array.isArray(rec.slots) || rec.slots.length < 2) return;
+    if (!rec || !Array.isArray(rec.slots) || rec.slots.length < 2) { incSeen = ''; return; }
     const { chatKey, charKey } = lockContext(id);
-    if (!chatKey && !charKey) return;
+    if (!chatKey && !charKey) { incSeen = ''; return; }
+    // SillyTavern swaps its chat id/metadata a moment BEFORE it announces the chat change, so a single
+    // look can catch the NEW chat with the OLD chat's incarnation live. Only trust a state seen twice in a row.
+    const sig = `${id}|${chatKey}|${charKey}|${rec.activeKey}`;
+    if (sig !== incSeen) { incSeen = sig; return; }
     const m = memoryStore();
+    // Only FILL a missing memory. Explicit switches already update it; never overwrite a remembered
+    // incarnation here, or "whatever was live last" would replace the one that was locked.
     const stored = chatKey ? m.chat[chatKey]?.[id] : m.character[charKey]?.[id];
-    if (stored !== rec.activeKey) rememberIncarnation(id, rec.activeKey);
+    if (!stored || !incSlot(rec, stored)) rememberIncarnation(id, rec.activeKey);
 }
 
 async function restoreRememberedIncarnation(attempt = 0) {
@@ -1727,6 +1734,7 @@ export function registerIncarnationMemoryHook() {
     incMemoryHandler = () => {
         // A chat switch fires CHAT_CHANGED and then (through the locks) PERSONA_CHANGED; settle on the final state once.
         incMemoryBusy = true;
+        incSeen = '';
         clearTimeout(incMemoryTimer);
         incMemoryTimer = setTimeout(() => { restoreRememberedIncarnation(); }, 450);
     };
